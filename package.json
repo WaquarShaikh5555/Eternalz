@@ -7,9 +7,12 @@
     "start": "node bot.js"
   },
   "dependencies": {
+    "@discordjs/voice": "^0.18.0",
+    "axios": "^1.8.4",
     "discord.js": "^14.0.0",
     "dotenv": "^16.0.3",
     "express": "^5.1.0",
+    "google-tts-api": "^0.0.6",
     "node-fetch": "^2.6.7"
   },
   "author": "Waquar Shaikh",
