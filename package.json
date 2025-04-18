@@ -1,0 +1,16 @@
+{
+  "name": "Eternlz",
+  "version": "1.0.0",
+  "description": "A Professional Bot Made By Waquar Shaikh",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "node-fetch": "^2.6.7",
+    "dotenv": "^16.0.3"
+  },
+  "author": "Waquar Shaikh",
+  "license": "ISC"
+}
