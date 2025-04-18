@@ -74,3 +74,6 @@ client.on('messageCreate', async (message) => {
 
 // Use token from .env file
 client.login(process.env.BOT_TOKEN);
+
+
+require('./webserver');;
