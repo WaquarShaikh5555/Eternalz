@@ -1,48 +1,47 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { Configuration, OpenAIApi } = require('openai');
+const OpenAI = require('openai');
 
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('genimage')
-    .setDescription('Generate AI images from a prompt')
+    .setDescription('Generate a high-quality image from a prompt')
     .addStringOption(option =>
       option.setName('prompt')
-        .setDescription('What do you want to see?')
+        .setDescription('What image do you want to generate?')
         .setRequired(true)
     ),
 
   async execute(interaction) {
     const prompt = interaction.options.getString('prompt');
 
-    await interaction.reply('Designing something fire... please wait');
+    await interaction.deferReply();
 
     try {
-      const response = await openai.createImage({
+      const response = await openai.images.generate({
+        model: 'dall-e-3',
         prompt: prompt,
-        n: 2, // number of images
+        n: 1,
         size: '1024x1024',
-        response_format: 'url',
       });
 
-      const embeds = response.data.data.map((img, index) => {
-        return new EmbedBuilder()
-          .setTitle(`Image ${index + 1}`)
-          .setDescription(`**Prompt:** ${prompt}`)
-          .setImage(img.url)
-          .setColor(0x00ff00)
-          .setFooter({ text: 'Powered by Eternalz' });
-      });
+      const imageUrl = response.data[0].url;
 
-      await interaction.editReply({ content: '', embeds });
+      const embed = new EmbedBuilder()
+        .setTitle('Image Generated')
+        .setDescription(`Prompt: **${prompt}**`)
+        .setImage(imageUrl)
+        .setColor('Green')
+        .setFooter({ text: 'Powered By Eternalz' });
 
-    } catch (err) {
-      console.error('OpenAI Image error:', err);
-      await interaction.editReply('Something went wrong while generating your image.');
+      await interaction.editReply({ embeds: [embed] });
+
+    } catch (error) {
+      console.error('Image generation error:', error);
+      await interaction.editReply('There was an error generating the image. Try a different prompt.');
     }
-  }
+  },
 };
