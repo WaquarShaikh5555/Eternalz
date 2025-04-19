@@ -8,9 +8,8 @@ mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
-.then(() => console.log('MongoDB connected!'))
-.catch(err => console.log('MongoDB error:', err));
-
+  .then(() => console.log('MongoDB connected!'))
+  .catch(err => console.log('MongoDB error:', err));
 
 // Create a new client instance
 const client = new Client({
@@ -25,19 +24,31 @@ const client = new Client({
 // Create a collection for storing commands
 client.commands = new Collection();
 
-// Load commands from the 'commands' folder
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+// Function to recursively read all commands from subfolders
+const loadCommands = (dir) => {
+  const files = fs.readdirSync(dir);
 
-// Register each command
-for (const file of commandFiles) {
-  const command = require(path.join(commandsPath, file));
-  if (command.data && command.execute) {
-    client.commands.set(command.data.name, command);
-  } else {
-    console.log(`[WARNING] Command in ${file} missing "data" or "execute".`);
+  for (const file of files) {
+    const fullPath = path.join(dir, file);
+    const stat = fs.statSync(fullPath);
+
+    if (stat.isDirectory()) {
+      // Recursively load commands from subfolders
+      loadCommands(fullPath);
+    } else if (file.endsWith('.js')) {
+      const command = require(fullPath);
+      if (command.data && command.execute) {
+        client.commands.set(command.data.name, command);
+      } else {
+        console.log(`[WARNING] Command in ${file} missing "data" or "execute".`);
+      }
+    }
   }
-}
+};
+
+// Load commands from the 'commands' folder and subfolders
+const commandsPath = path.join(__dirname, 'commands');
+loadCommands(commandsPath);
 
 // Register commands with the Discord API
 const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
