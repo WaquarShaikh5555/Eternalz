@@ -1,8 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const googleTTS = require('google-tts-api');
 const ffmpeg = require('fluent-ffmpeg');
-const path = require('path');
-const fs = require('fs');
+const { Readable } = require('stream'); // For streaming the generated audio
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,44 +21,41 @@ module.exports = {
           { name: 'Hindi', value: 'hi' }
         )
     ),
+  
   async execute(interaction) {
     const text = interaction.options.getString('text');
     const language = interaction.options.getString('language');
-
     const voice = language === 'hi' ? 'hi' : 'en'; // Default to English if not Hindi
 
+    // Get the audio URL from Google TTS
     const url = googleTTS.getAudioUrl(text, {
       lang: voice,
       slow: false,
       host: 'https://translate.google.com',
     });
 
-    // Path to save audio or video file
-    const audioPath = path.join(__dirname, `./audio/tts_output.mp3`);
-
-    // Download audio file from Google TTS
+    // Download audio using fetch
     const response = await fetch(url);
     const buffer = await response.buffer();
-    fs.writeFileSync(audioPath, buffer);
+    const audioStream = Readable.from(buffer); // Convert the buffer to a stream
 
-    // Now, generate a video with FFmpeg
-    const videoPath = path.join(__dirname, `./video/tts_output.mp4`);
-
-    ffmpeg()
-      .input(audioPath)
+    // Generate a video with a blank background and the audio stream
+    const videoStream = ffmpeg()
+      .input(audioStream)
       .inputOption('-f lavfi')
       .input('color=c=black:s=1280x720:r=25') // Blank background video with black color
       .outputOption('-pix_fmt yuv420p')
       .outputOption('-shortest')
-      .output(videoPath)
-      .on('end', () => {
-        // Send video to Discord
-        interaction.reply({ content: 'Here is your TTS video!', files: [videoPath] });
+      .format('mp4')
+      .pipe();
 
-        // Clean up
-        fs.unlinkSync(audioPath);
-        fs.unlinkSync(videoPath);
-      })
-      .run();
-  }
+    // Send the video directly to Discord
+    interaction.reply({
+      content: 'Here is your TTS video!',
+      files: [{
+        attachment: videoStream,
+        name: 'tts_output.mp4',
+      }],
+    });
+  },
 };
