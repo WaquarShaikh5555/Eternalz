@@ -104,7 +104,7 @@ module.exports = {
 
         const resultEmbed = new EmbedBuilder()
           .setTitle('Poll Results')
-          .setDescription(`Poll: ${text}\nTotal Votes: **${totalVotes - 1 ? totalVotes : 0}**`)
+          .setDescription(`Poll: ${text}\nTotal Votes: **${Object.values(votes).reduce((a, b) => a + b, 0)}**`)
           .setColor('#FF0000');
 
         const formatResult = (label, count) => {
