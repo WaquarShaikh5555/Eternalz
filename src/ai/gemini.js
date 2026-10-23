@@ -12,6 +12,7 @@
 
 const { AiProviderError, AiQuotaError } = require('../core/errors');
 const { withRetry } = require('../core/retry');
+const { sanitizeToolHistory } = require('./message-history');
 
 class GeminiProvider {
   constructor(options) {
@@ -31,10 +32,11 @@ class GeminiProvider {
   }
 
   toWireRequest(request) {
-    const system = request.messages.filter((m) => m.role === 'system');
+    const messages = sanitizeToolHistory(request.messages, request.tools);
+    const system = messages.filter((m) => m.role === 'system');
     const contents = [];
 
-    for (const message of request.messages) {
+    for (const message of messages) {
       if (message.role === 'system') continue;
       if (message.role === 'tool') {
         contents.push({

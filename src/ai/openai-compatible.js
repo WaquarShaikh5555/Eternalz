@@ -13,6 +13,7 @@
 
 const { AiProviderError, AiQuotaError } = require('../core/errors');
 const { withRetry } = require('../core/retry');
+const { sanitizeToolHistory } = require('./message-history');
 
 class OpenAiCompatibleProvider {
   /**
@@ -90,9 +91,10 @@ class OpenAiCompatibleProvider {
    * @param {string} [request.toolChoice] 'auto' | 'none'
    */
   async chat(request) {
+    const messages = sanitizeToolHistory(request.messages, request.tools);
     const payload = {
       model: this.model,
-      messages: this.toWireMessages(request.messages),
+      messages: this.toWireMessages(messages),
       temperature: request.temperature ?? 0.2,
       stream: false,
     };
