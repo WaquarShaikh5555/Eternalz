@@ -17,15 +17,19 @@
  */
 
 const { READ_TOOLS, WRITE_TOOLS, getTool, validateToolCall } = require('../discord/tools');
-const { formatSnapshotForPrompt } = require('../discord/snapshot');
+const { formatSnapshotForPrompt, compactSnapshot } = require('../discord/snapshot');
 const { toProviderTools, toGeminiDeclarations } = require('../discord/tools');
 const { AiProviderError } = require('../core/errors');
+
+const DEFAULT_MAX_OUTPUT_TOKENS = 512;
+const MAX_INSPECTION_OUTPUT_TOKENS = 192;
+const MAX_TOOL_RESULT_CHARS = 800;
 
 const SYSTEM_PROMPT = `You are the AI server administrator for a single Discord server.
 
 HOW YOU WORK
 - You act ONLY through the tools that are provided to you. Never invent API calls, never invent tools, and never claim you changed something without calling the matching tool.
-- In the inspection phase you call read-only tools to learn the real current state (exact channel names, category layout, role names, existing permissions, the bot's own permissions).
+- The supplied snapshot is fresh inspection data. In the inspection phase, call read-only tools only for missing details (exact channel names, category layout, role names, existing permissions, or the bot's own permissions); do not repeat a full read unnecessarily.
 - In the planning phase you call the mutating tools with concrete arguments. Use the EXACT names that appear in the server state - the tools resolve names case-insensitively and fail if a name does not exist.
 - One tool call equals one intended change. Do not batch several unrelated changes into one call, and do not call the same mutating tool twice for the same target.
 - Do not create something that already exists. If a channel, category or role with that name is already there, use the matching update tool instead of the create tool.
@@ -57,7 +61,41 @@ OUTPUT
 - Keep any free text to a couple of sentences.`;
 
 function formatToolsFor(provider, tools) {
-  return provider.kind === 'gemini' ? toGeminiDeclarations(tools) : toProviderTools(tools);
+  return provider.kind === 'gemini'
+    ? toGeminiDeclarations(tools, { compact: true })
+    : toProviderTools(tools, { compact: true });
+}
+
+function outputTokenLimit(config, inspection = false) {
+  const configured = Number.isFinite(config.aiMaxOutputTokens)
+    ? config.aiMaxOutputTokens
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+  const safe = Math.max(64, Math.min(4096, configured));
+  return inspection ? Math.min(safe, MAX_INSPECTION_OUTPUT_TOKENS) : safe;
+}
+
+/**
+ * Keep read results bounded as well. A large list_channels response must not
+ * undo the savings from the compact initial snapshot on the next model call.
+ * The preview is valid JSON text and explicitly marked as truncated; the model
+ * can request a narrower read rather than receiving an oversized request.
+ */
+function serializeToolResult(result) {
+  const data = result.tool === 'get_server_snapshot' && result.ok
+    ? compactSnapshot(result.data)
+    : result.data;
+  const payload = result.ok
+    ? { ok: true, message: result.message, data }
+    : { ok: false, error: result.error };
+  const text = JSON.stringify(payload);
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
+
+  return JSON.stringify({
+    ok: result.ok,
+    message: `${result.message || 'Read result'} (truncated; use a narrower read for more detail)`,
+    truncated: true,
+    preview: text.slice(0, MAX_TOOL_RESULT_CHARS - 250),
+  });
 }
 
 /**
@@ -102,6 +140,7 @@ async function inspectPhase({ provider, config, ctx, prompt, snapshot, messages,
       tools,
       toolChoice: 'auto',
       temperature: config.aiTemperature,
+      maxTokens: outputTokenLimit(config, true),
       signal: ctx.signal,
     });
 
@@ -164,9 +203,7 @@ async function inspectPhase({ provider, config, ctx, prompt, snapshot, messages,
         role: 'tool',
         toolCallId: call.id,
         name: call.name,
-        content: JSON.stringify(
-          result.ok ? { ok: true, message: result.message, data: result.data } : { ok: false, error: result.error },
-        ),
+        content: serializeToolResult(result),
       });
     }
 
@@ -189,6 +226,7 @@ async function planPhase({ provider, config, ctx, messages, logger }) {
     tools,
     toolChoice: 'auto',
     temperature: config.aiTemperature,
+    maxTokens: outputTokenLimit(config),
     signal: ctx.signal,
   });
 
@@ -205,6 +243,7 @@ async function planPhase({ provider, config, ctx, messages, logger }) {
       tools,
       toolChoice: 'auto',
       temperature: config.aiTemperature,
+      maxTokens: outputTokenLimit(config),
       signal: ctx.signal,
     });
   }

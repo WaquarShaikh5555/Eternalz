@@ -203,6 +203,10 @@ function buildHttpError(response, parsed, provider) {
     quota.retryAfter = error.retryAfter;
     return quota;
   }
+  if (response.status === 413) {
+    error.message =
+      'The AI request exceeded the provider\'s current free-tier token budget. Try a narrower request or wait for the per-minute window to reset; a paid upgrade is not required.';
+  }
   if (response.status === 404) {
     error.message = `The AI provider does not know the model "${parsed?.error?.message || 'unknown'}".`;
   }
