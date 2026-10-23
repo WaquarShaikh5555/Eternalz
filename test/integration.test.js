@@ -114,7 +114,8 @@ test('a plain-language request becomes a real Discord change', async () => {
     user: { id: 'owner-1' },
     guild,
     options: {
-      getPrompt: () => 'create a Support category with a tickets channel',
+      getString: (name) =>
+        name === 'prompt' ? 'create a Support category with a tickets channel' : null,
       getBoolean: () => false,
     },
     async deferReply() {},

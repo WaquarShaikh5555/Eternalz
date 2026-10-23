@@ -11,12 +11,12 @@
  * application code, before the AI provider is contacted.
  */
 
-const { SlashCommandBuilder, EmbedBuilder, InteractionContextType } = require('discord.js');
+const { SlashCommandBuilder, InteractionContextType } = require('discord.js');
 
 const { runtime } = require('../../src/runtime');
-const { handleAdminRequest } = require('../../src/admin/service');
-const { buildPlanEmbed, buildButtons } = require('../../src/admin/confirmation');
-const { AuthorizationError, AiProviderError, AiQuotaError, toError } = require('../../src/core/errors');
+const { handleAdminRequest, extractPrompt } = require('../../src/admin/service');
+const { renderAdminResult, renderAdminError } = require('../../src/admin/interactions');
+const { toError } = require('../../src/core/errors');
 
 module.exports = {
   // Registered only in the configured target guild (see config/deploy-commands.js).
@@ -31,7 +31,7 @@ module.exports = {
       option
         .setName('prompt')
         .setDescription(
-          'What should change? e.g. "Create a category called Support with a text channel named tickets"',
+          'What should change? You can be specific or say "improve the overall look of the server"',
         )
         .setRequired(true)
         .setMaxLength(2000),
@@ -60,6 +60,8 @@ module.exports = {
       return;
     }
 
+    const prompt = extractPrompt(interaction);
+
     try {
       const result = await handleAdminRequest({
         interaction,
@@ -72,9 +74,12 @@ module.exports = {
         cooldown: runtime.cooldown,
         provider: runtime.provider,
         client: interaction.client,
+        onProgress: async (text) => {
+          await interaction.editReply({ content: text, embeds: [], components: [] }).catch(() => {});
+        },
       });
 
-      await renderResult(interaction, result);
+      await renderAdminResult(interaction, result, { prompt });
     } catch (err) {
       const error = toError(err);
       logger?.warn?.('ai: request failed', {
@@ -82,86 +87,7 @@ module.exports = {
         guildId: guild.id,
         reason: error.message,
       });
-
-      if (error instanceof AuthorizationError) {
-        await interaction.editReply({ content: `🔒 ${error.message}` });
-        return;
-      }
-      if (error instanceof AiQuotaError) {
-        await interaction.editReply({
-          content:
-            `⏳ ${error.message}\nThe AI provider is temporarily out of quota. Everything else in the bot still works.`,
-        });
-        return;
-      }
-      if (error instanceof AiProviderError) {
-        await interaction.editReply({
-          content: `⚠️ The AI provider could not be used: ${error.message.slice(0, 400)}`,
-        });
-        return;
-      }
-
-      await interaction.editReply({
-        content: `⚠️ Something went wrong: ${error.message.slice(0, 400)}`,
-      });
+      await renderAdminError(interaction, error);
     }
   },
 };
-
-/** Render the outcome of a request. */
-async function renderResult(interaction, result) {
-  switch (result.kind) {
-    case 'executed': {
-      const { buildResultEmbed } = require('../../src/admin/service');
-      const embed = buildResultEmbed(result.report, null, result.gaps);
-      if (result.notes) {
-        embed.addFields({ name: 'Notes', value: String(result.notes).slice(0, 1000), inline: false });
-      }
-      await interaction.editReply({ embeds: [embed] });
-      return;
-    }
-
-    case 'awaiting_confirmation': {
-      const embed = buildPlanEmbed(result.plan);
-      await interaction.editReply({
-        embeds: [embed],
-        components: [buildButtons(result.plan)],
-      });
-      return;
-    }
-
-    case 'dry_run': {
-      const embed = buildPlanEmbed(result.plan)
-        .setTitle('Plan preview (nothing was changed)')
-        .setColor(0x3498db);
-      const rejected = result.rejected?.length
-        ? `\n\nRejected steps: ${result.rejected.map((r) => `${r.tool} (${r.reason})`).join('; ')}`
-        : '';
-      embed.addFields({
-        name: 'Dry run',
-        value: 'Nothing was applied. Re-run without the dry-run option to execute this plan.',
-      });
-      if (rejected) embed.addFields({ name: 'Rejected steps', value: rejected.slice(0, 1000) });
-      await interaction.editReply({ embeds: [embed], components: [] });
-      return;
-    }
-
-    case 'no_action': {
-      const embed = new EmbedBuilder()
-        .setTitle('Nothing to change')
-        .setColor(0x95a5a6)
-        .setDescription(String(result.notes || 'I did not find anything to change.').slice(0, 2000));
-      if (result.rejected?.length) {
-        embed.addFields({
-          name: 'Rejected steps',
-          value: result.rejected.map((r) => `${r.tool} — ${r.reason}`).join('\n').slice(0, 1000),
-        });
-      }
-      await interaction.editReply({ embeds: [embed] });
-      return;
-    }
-
-    default:
-      await interaction.editReply({ content: 'The request was not completed.' });
-  }
-}

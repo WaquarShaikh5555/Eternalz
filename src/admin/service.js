@@ -31,6 +31,26 @@ const {
 const { AuthorizationError, toError } = require('../core/errors');
 
 /**
+ * Read the real Discord slash-command option.
+ *
+ * `getPrompt()` only exists in our test doubles; Discord.js exposes
+ * `getString('prompt')`. Keep the fallback for backwards compatibility with
+ * older tests and internal follow-up interactions.
+ */
+function extractPrompt(interaction) {
+  const options = interaction?.options;
+  if (!options) return '';
+  if (typeof options.getString === 'function') {
+    const value = options.getString('prompt');
+    if (value) return String(value);
+  }
+  if (typeof options.getPrompt === 'function') {
+    return String(options.getPrompt() || '');
+  }
+  return '';
+}
+
+/**
  * Handle a `/ai` request.
  *
  * @returns {Promise<{kind: string, plan?: object, report?: object}>}
@@ -49,7 +69,7 @@ async function handleAdminRequest(options) {
       guildId,
       requesterId,
       event: 'rejected',
-      prompt: interaction.options?.getPrompt?.() || null,
+      prompt: extractPrompt(interaction) || null,
       summary: { reason: describeRefusal(config, guild, requesterId) },
       notify: false,
     });
@@ -63,7 +83,7 @@ async function handleAdminRequest(options) {
   }
 
   // --- 2. Validate the request, then rate limit ----------------------------
-  const prompt = String(interaction.options?.getPrompt?.() || '').trim();
+  const prompt = extractPrompt(interaction).trim();
   const dryRun = Boolean(interaction.options?.getBoolean?.('dry_run'));
 
   if (!prompt) {
@@ -76,21 +96,26 @@ async function handleAdminRequest(options) {
   }
 
   const cooldownKey = `${guildId}:${requesterId}`;
-  const cooldownLeft = cooldown?.remaining(cooldownKey) || 0;
-  if (cooldownLeft > 0) {
-    throw new AuthorizationError(
-      `Please wait ${cooldownLeft}s before sending another AI administration request.`,
-    );
+  if (!options.skipRateLimit) {
+    const cooldownLeft = cooldown?.remaining(cooldownKey) || 0;
+    if (cooldownLeft > 0) {
+      throw new AuthorizationError(
+        `Please wait ${cooldownLeft}s before sending another AI administration request.`,
+      );
+    }
+    if (limiter && !limiter.tryAcquire(cooldownKey)) {
+      const wait = Math.ceil(limiter.retryAfterMs(cooldownKey) / 1000);
+      throw new AuthorizationError(
+        `Too many AI administration requests. Please try again in ${wait}s.`,
+      );
+    }
+    cooldown?.start(cooldownKey, config.aiRequestCooldownMs);
   }
-  if (limiter && !limiter.tryAcquire(cooldownKey)) {
-    const wait = Math.ceil(limiter.retryAfterMs(cooldownKey) / 1000);
-    throw new AuthorizationError(
-      `Too many AI administration requests. Please try again in ${wait}s.`,
-    );
-  }
-  cooldown?.start(cooldownKey, config.aiRequestCooldownMs);
+
+  const progress = options.onProgress || (async () => {});
 
   // --- 3. Inspect the real server state ------------------------------------
+  await progress('🔍 Reading the current server and understanding your request…');
   const snapshot = buildGuildSnapshot(guild, guild.members?.me);
 
   const actorMember = guild.members?.cache?.get(requesterId) || null;
@@ -106,6 +131,7 @@ async function handleAdminRequest(options) {
   };
 
   // --- 4. Ask the model for a plan ----------------------------------------
+  await progress('🧠 Thinking through the best safe changes and building a plan…');
   const plan = await createPlan({
     provider: options.provider,
     config,
@@ -170,6 +196,7 @@ async function handleAdminRequest(options) {
 
   // --- 7. Auto-execute safe plans -----------------------------------------
   if (assessment.level === RISK.SAFE || assessment.level === RISK.READ) {
+    await progress('⚙️ Applying the plan and verifying every change…');
     const result = await executeActions({
       actions,
       ctx,
@@ -496,6 +523,7 @@ function buildResultEmbed(result, plan, gaps = null) {
 }
 
 module.exports = {
+  extractPrompt,
   handleAdminRequest,
   handlePlanButton,
   executeActions,
