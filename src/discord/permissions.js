@@ -34,6 +34,70 @@ const PRIVILEGED_PERMISSIONS = [
   'DeafenMembers',
 ];
 
+/**
+ * The Discord permissions each tool needs.
+ *
+ * This table lets the bot tell you *before* it tries something that it is not
+ * allowed to do, instead of failing halfway through a plan with a raw 403.
+ */
+const TOOL_PERMISSIONS = {
+  // inspection - the bot can always read
+  inspect_guild: [],
+  list_channels: [],
+  list_roles: [],
+  get_channel_overwrites: [],
+  get_role_permissions: [],
+  get_member_roles: [],
+  get_server_snapshot: [],
+
+  // channels
+  create_category: ['ManageChannels'],
+  create_channel: ['ManageChannels'],
+  rename_channel: ['ManageChannels'],
+  set_channel_topic: ['ManageChannels'],
+  set_channel_slowmode: ['ManageChannels'],
+  move_channel: ['ManageChannels'],
+  delete_channel: ['ManageChannels'],
+  set_permission_overwrite: ['ManageChannels'],
+  delete_permission_overwrite: ['ManageChannels'],
+
+  // roles
+  create_role: ['ManageRoles'],
+  edit_role: ['ManageRoles'],
+  delete_role: ['ManageRoles'],
+  assign_role: ['ManageRoles'],
+  remove_role: ['ManageRoles'],
+
+  // messaging
+  send_announcement: ['SendMessages', 'EmbedLinks'],
+  set_welcome_channel: ['SendMessages', 'EmbedLinks'],
+
+  // moderation
+  ban_member: ['BanMembers'],
+  kick_member: ['KickMembers'],
+  timeout_member: ['ModerateMembers'],
+  unban_member: ['BanMembers'],
+  delete_messages: ['ManageMessages'],
+
+  // community
+  create_ticket_channel: ['ManageChannels', 'ManageRoles'],
+  set_onboarding_role: ['ManageRoles'],
+  set_server_rules: ['ManageChannels', 'SendMessages'],
+};
+
+/** Human readable names for the Discord UI, used in the "how to fix" hint. */
+const PERMISSION_LABELS = {
+  ManageChannels: 'Manage Channels',
+  ManageRoles: 'Manage Roles',
+  ManageMessages: 'Manage Messages',
+  SendMessages: 'Send Messages',
+  EmbedLinks: 'Embed Links',
+  BanMembers: 'Ban Members',
+  KickMembers: 'Kick Members',
+  ModerateMembers: 'Timeout Members',
+  ManageGuild: 'Manage Server',
+};
+
 function decodePermissions(bitfield) {
   const big = BigInt(bitfield ?? 0n);
   const names = [];
@@ -65,6 +129,32 @@ function permissionsFromNames(names = []) {
     value |= flag;
   }
   return new PermissionsBitField(value);
+}
+
+/**
+ * The permissions a tool needs that the bot does not currently have.
+ * @param {import('discord.js').Guild} guild
+ * @param {string} toolName
+ * @returns {string[]} missing permission names
+ */
+function missingToolPermissions(guild, toolName) {
+  const required = TOOL_PERMISSIONS[toolName] || [];
+  if (!required.length) return [];
+  const me = guild?.members?.me;
+  if (!me) return required;
+  return required.filter((name) => {
+    const flag = PermissionFlagsBits[name];
+    if (flag === undefined) return false;
+    return !me.permissions.has(flag);
+  });
+}
+
+/** A message that tells the user exactly where to grant a missing permission. */
+function permissionFixHint(guild, missing = []) {
+  if (!missing.length) return '';
+  const roleName = guild?.members?.me?.roles?.highest?.name || "the bot's role";
+  const names = missing.map((name) => PERMISSION_LABELS[name] || name).join(', ');
+  return `Grant "${names}" to ${roleName} in Server Settings -> Roles -> ${roleName}.`;
 }
 
 /**
@@ -188,7 +278,11 @@ function privilegedPermissionsIn(role) {
 
 module.exports = {
   PERMISSION_NAMES,
+  PERMISSION_LABELS,
   PRIVILEGED_PERMISSIONS,
+  TOOL_PERMISSIONS,
+  missingToolPermissions,
+  permissionFixHint,
   decodePermissions,
   permissionsFromNames,
   assertBotPermissions,

@@ -38,7 +38,17 @@ const STATUS = {
 };
 
 /** Create and persist a pending plan. */
-async function createPendingPlan({ storage, config, guildId, requesterId, prompt, actions, risk, reasons }) {
+async function createPendingPlan({
+  storage,
+  config,
+  guildId,
+  requesterId,
+  prompt,
+  actions,
+  risk,
+  reasons,
+  permissionGaps,
+}) {
   const now = Date.now();
   const plan = {
     id: crypto.randomBytes(12).toString('hex'),
@@ -54,6 +64,7 @@ async function createPendingPlan({ storage, config, guildId, requesterId, prompt
     confirmedAt: null,
     executedAt: null,
     result: null,
+    permissionGaps: permissionGaps || null,
   };
   await storage.putPlan(plan);
   return plan;
@@ -115,6 +126,20 @@ function buildPlanEmbed(plan, { secondStage = false } = {}) {
       inline: false,
     },
   );
+
+  if (plan.permissionGaps?.missing?.length) {
+    embed.addFields({
+      name: '⚠️ Missing Discord permissions',
+      value: [
+        `The bot cannot perform this plan yet: ${plan.permissionGaps.missing.join(', ')}.`,
+        plan.permissionGaps.hint,
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 1000),
+      inline: false,
+    });
+  }
 
   if ((plan.actions?.length || 0) > 15) {
     embed.addFields({

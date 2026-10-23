@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS ai_plans (
   expires_at   INTEGER NOT NULL,
   confirmed_at INTEGER,
   executed_at  INTEGER,
-  result       TEXT
+  result       TEXT,
+  permission_gaps TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ai_audit (
@@ -83,7 +84,16 @@ class SqliteStore {
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA synchronous = NORMAL;');
     this.db.exec(SCHEMA);
+    this.#migrate();
     this.logger?.info?.('storage: sqlite store ready', { file: this.file });
+  }
+
+  /** Add columns that newer versions introduced, if they are missing. */
+  #migrate() {
+    const columns = this.db.prepare('PRAGMA table_info(ai_plans)').all();
+    if (!columns.some((c) => c.name === 'permission_gaps')) {
+      this.db.exec('ALTER TABLE ai_plans ADD COLUMN permission_gaps TEXT');
+    }
   }
 
   async close() {
@@ -100,12 +110,13 @@ class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO ai_plans
-          (id, guild_id, requester_id, prompt, actions, risk, reasons, status, created_at, expires_at, confirmed_at, executed_at, result)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, guild_id, requester_id, prompt, actions, risk, reasons, status, created_at, expires_at, confirmed_at, executed_at, result, permission_gaps)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           prompt=excluded.prompt, actions=excluded.actions, risk=excluded.risk,
           reasons=excluded.reasons, status=excluded.status, expires_at=excluded.expires_at,
-          confirmed_at=excluded.confirmed_at, executed_at=excluded.executed_at, result=excluded.result`,
+          confirmed_at=excluded.confirmed_at, executed_at=excluded.executed_at, result=excluded.result,
+          permission_gaps=excluded.permission_gaps`,
       )
       .run(
         plan.id,
@@ -121,6 +132,7 @@ class SqliteStore {
         plan.confirmedAt ?? null,
         plan.executedAt ?? null,
         plan.result === undefined ? null : JSON.stringify(plan.result),
+        plan.permissionGaps === undefined ? null : JSON.stringify(plan.permissionGaps),
       );
     return plan;
   }
@@ -222,6 +234,7 @@ function rowToPlan(row) {
     confirmedAt: row.confirmed_at ?? null,
     executedAt: row.executed_at ?? null,
     result: row.result ? safeParse(row.result, null) : null,
+    permissionGaps: row.permission_gaps ? safeParse(row.permission_gaps, null) : null,
   };
 }
 

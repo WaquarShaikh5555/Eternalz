@@ -72,9 +72,22 @@ them the onboarding role when they join.
 **Messaging** — post an announcement or a formatted embed when it is
 explicitly requested.
 
-**Moderation** — ban and kick a member (always requires confirmation).
+**Moderation** — timeout (mute), kick, ban, unban, and bulk delete up to 100
+recent messages in a channel. Timeout, kick, ban and bulk delete always
+require confirmation.
+
+**Permission self-check** — before planning or executing, the bot compares the
+required permissions with the ones it actually has and tells you exactly what
+to grant and where (`Server Settings → Roles → <bot role>`), instead of
+failing with a raw Discord 403.
 
 Anything outside that list is not implemented and the model cannot invent it.
+See **[docs/capabilities.md](docs/capabilities.md)** for the complete list of
+what is and is not supported.
+
+> Not sure which environment variable goes where? See
+> **[docs/environment-variables.md](docs/environment-variables.md)** for a
+> click-by-click guide.
 
 ---
 
@@ -144,6 +157,23 @@ never from what the model says about the action.
   plan to be replayed.
 * **Honest reporting.** A success is only reported after Discord confirmed it.
   Failures are listed individually, e.g. "12 of 15 created, 3 failed".
+
+### How much does the AI "think"?
+
+The model is told to use judgement, not just to translate words:
+
+* it picks sensible defaults itself (kebab-case channel names, a category when
+  the request implies a group, a sensible colour);
+* it reuses existing channels and roles instead of making duplicates;
+* if a step is missing it adds the obvious prerequisite itself (create the
+  category before creating a channel inside it);
+* it checks its own permissions before planning and tells you what is missing;
+* it refuses to do things the tools cannot do, and says what it *can* do
+  instead.
+
+It will **not** invent extra changes you did not ask for, and it will not
+reorganise, rename or delete anything unrelated. That boundary is deliberate:
+a creative administrator is useful, an unpredictable one is dangerous.
 
 ---
 
@@ -430,7 +460,7 @@ uses Node's built-in `node:sqlite`.
 npm test
 ```
 
-142 tests covering:
+163 tests covering:
 
 * **authorisation** — owner, configured admins, configured roles, ordinary
   members, the wrong guild, and the guarantee that *the AI provider is never
@@ -471,8 +501,10 @@ npm test
 
 ## Known limitations
 
-* The AI can only work with the tools listed above. It cannot, for example,
-  create a webhook, edit a member's nickname, or schedule a message.
+* The AI can only work with the tools listed in
+  [docs/capabilities.md](docs/capabilities.md). It cannot, for example, create
+  a webhook, edit a member's nickname, manage emojis, change the server name
+  or icon, or schedule a message.
 * Privileged roles (anything carrying `Administrator`, `ManageGuild`,
   `ManageRoles`, …) can be created with confirmation but can never be assigned
   or removed from a member by the AI.

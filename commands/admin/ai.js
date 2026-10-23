@@ -113,7 +113,7 @@ async function renderResult(interaction, result) {
   switch (result.kind) {
     case 'executed': {
       const { buildResultEmbed } = require('../../src/admin/service');
-      const embed = buildResultEmbed(result.report);
+      const embed = buildResultEmbed(result.report, null, result.gaps);
       if (result.notes) {
         embed.addFields({ name: 'Notes', value: String(result.notes).slice(0, 1000), inline: false });
       }

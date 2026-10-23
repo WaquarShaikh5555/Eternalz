@@ -14,6 +14,7 @@
  */
 
 const { getTool } = require('../discord/tools');
+const { missingToolPermissions, permissionFixHint } = require('../discord/permissions');
 const { withRetry } = require('../core/retry');
 const { toError } = require('../core/errors');
 
@@ -72,6 +73,16 @@ async function executePlan(options) {
     try {
       // Re-check authorisation immediately before acting.
       if (authorize) await authorize(action);
+
+      // Fail fast when the bot is missing a Discord permission, so the user
+      // gets an actionable message instead of a raw Discord 403.
+      const missing = missingToolPermissions(ctx.guild, action.tool);
+      if (missing.length) {
+        throw new Error(
+          `The bot is missing the following Discord permission(s): ${missing.join(', ')}. ` +
+            permissionFixHint(ctx.guild, missing),
+        );
+      }
 
       // Only transient failures are retried - a permission error or an
       // unknown channel is reported straight away.
@@ -151,4 +162,17 @@ function buildSummary(succeeded, failed, skipped) {
   return parts.join(', ');
 }
 
-module.exports = { executePlan, buildSummary };
+/**
+ * Which permissions a whole plan needs that the bot does not have.
+ * @returns {{missing: string[], hint: string}}
+ */
+function planPermissionGaps(guild, actions = []) {
+  const missing = new Set();
+  for (const action of actions) {
+    for (const name of missingToolPermissions(guild, action.tool)) missing.add(name);
+  }
+  const list = [...missing];
+  return { missing: list, hint: permissionFixHint(guild, list) };
+}
+
+module.exports = { executePlan, buildSummary, planPermissionGaps };

@@ -144,6 +144,7 @@ function assessPlan(actions = []) {
       if (!reasons.includes(reason)) reasons.push(reason);
     }
     if (action.tool === 'delete_channel' || action.tool === 'delete_role' ||
+        action.tool === 'delete_messages' ||
         action.tool === 'ban_member' || action.tool === 'kick_member') {
       destructiveTools.push(action.tool);
     }

@@ -18,7 +18,7 @@ const { createPlan } = require('../ai/planner');
 const { buildGuildSnapshot } = require('../discord/snapshot');
 const { assessPlan, RISK, riskLabel, riskColour } = require('./risk');
 const { assertGuildAdmin, describeRefusal, isGuildAdmin } = require('./authorization');
-const { executePlan } = require('./executor');
+const { executePlan, planPermissionGaps } = require('./executor');
 const {
   createPendingPlan,
   loadPlan,
@@ -120,6 +120,9 @@ async function handleAdminRequest(options) {
   // --- 5. Classify the risk -------------------------------------------------
   const assessment = assessPlan(actions);
 
+  // Check up-front whether the bot is even allowed to perform these actions.
+  const gaps = planPermissionGaps(guild, actions);
+
   await audit?.log({
     guildId,
     requesterId,
@@ -139,6 +142,7 @@ async function handleAdminRequest(options) {
       kind: 'no_action',
       notes: plan.notes || 'I did not find anything to change.',
       rejected: plan.rejected,
+      gaps,
     };
   }
 
@@ -153,12 +157,14 @@ async function handleAdminRequest(options) {
       actions,
       risk: assessment.level,
       reasons: assessment.reasons,
+      permissionGaps: gaps,
     });
     return {
       kind: 'dry_run',
       plan: pending,
       notes: plan.notes,
       rejected: plan.rejected,
+      gaps,
     };
   }
 
@@ -181,7 +187,7 @@ async function handleAdminRequest(options) {
       summary: summariseResult(result),
     });
 
-    return { kind: 'executed', report: result, notes: plan.notes };
+    return { kind: 'executed', report: result, notes: plan.notes, gaps };
   }
 
   // --- 8. Ask for confirmation --------------------------------------------
@@ -194,6 +200,7 @@ async function handleAdminRequest(options) {
     actions,
     risk: assessment.level,
     reasons: assessment.reasons,
+    permissionGaps: gaps,
   });
 
   await audit?.log({
@@ -204,7 +211,7 @@ async function handleAdminRequest(options) {
     summary: { planId: pending.id, risk: assessment.level, actions: actions.length },
   });
 
-  return { kind: 'awaiting_confirmation', plan: pending, notes: plan.notes };
+  return { kind: 'awaiting_confirmation', plan: pending, notes: plan.notes, gaps };
 }
 
 /**
@@ -384,7 +391,7 @@ async function handlePlanButton(options) {
     summary: { planId, ...summariseResult(result) },
   });
 
-  const embed = buildResultEmbed(result, plan);
+  const embed = buildResultEmbed(result, plan, plan.permissionGaps);
   await interaction.editReply({ embeds: [embed], components: [] });
 
   return { kind: 'executed', report: result, plan };
@@ -416,7 +423,7 @@ function summariseResult(result) {
 }
 
 /** Embed that reports exactly what happened. */
-function buildResultEmbed(result, plan) {
+function buildResultEmbed(result, plan, gaps = null) {
   const embed = new EmbedBuilder().setTimestamp();
 
   const total = result.succeeded.length + result.failed.length + result.skipped.length;
@@ -463,6 +470,20 @@ function buildResultEmbed(result, plan) {
         .map((s) => `⏭️ ${s.description}\n${String(s.reason).slice(0, 200)}`)
         .join('\n')
         .slice(0, 900),
+      inline: false,
+    });
+  }
+
+  if (gaps?.missing?.length) {
+    embed.addFields({
+      name: '⚠️ Missing Discord permissions',
+      value: [
+        `The bot could not perform everything: ${gaps.missing.join(', ')}.`,
+        gaps.hint,
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 1000),
       inline: false,
     });
   }

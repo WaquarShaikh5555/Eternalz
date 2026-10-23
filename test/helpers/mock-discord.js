@@ -100,6 +100,11 @@ function makeChannel(guild, options = {}) {
       content: payload?.content || '',
       ...payload,
     }),
+    bulkDelete: async (count) => {
+      guild.__bulkDeleted = guild.__bulkDeleted || [];
+      guild.__bulkDeleted.push({ channelId: channel.id, count });
+      return new Collection(Array.from({ length: count }, (_, i) => [`m${i}`, { id: `m${i}` }]));
+    },
     messages: {
       fetch: async () => ({ first: () => null }),
     },
@@ -171,13 +176,23 @@ function makeMember(guild, options = {}) {
         role.members.cache.delete(member.id);
       },
     },
+    moderatable: true,
+    communicationDisabledUntilTimestamp: null,
+    timeout: async (ms) => {
+      member.communicationDisabledUntilTimestamp = Date.now() + ms;
+      return member;
+    },
     ban: async () => {
       guild.__banned = guild.__banned || [];
       guild.__banned.push(member);
+      guild.__banCollection = guild.__banCollection || new Collection();
+      guild.__banCollection.set(member.id, { user: member.user, reason: 'test' });
+      guild.members.cache.delete(member.id);
     },
     kick: async () => {
       guild.__kicked = guild.__kicked || [];
       guild.__kicked.push(member);
+      guild.members.cache.delete(member.id);
     },
     fetch: async () => member,
   };
@@ -241,6 +256,15 @@ function makeGuild(options = {}) {
     __deleted: [],
     __banned: [],
     __kicked: [],
+    __banCollection: new Collection(),
+    bans: {
+      fetch: async () => guild.__banCollection,
+      remove: async (userId) => {
+        guild.__unbanned = guild.__unbanned || [];
+        guild.__unbanned.push(userId);
+        guild.__banCollection.delete(userId);
+      },
+    },
   };
 
   const everyone = makeRole(guild, {
@@ -303,7 +327,9 @@ function makeGuild(options = {}) {
       'ManageChannels',
       'ManageRoles',
       'ManageMessages',
+      'ReadMessageHistory',
       'SendMessages',
+      'ModerateMembers',
       'EmbedLinks',
       'BanMembers',
       'KickMembers',
