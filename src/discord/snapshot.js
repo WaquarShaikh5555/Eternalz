@@ -72,8 +72,10 @@ function buildGuildSnapshot(guild, botMember) {
         ? [...c.permissionOverwrites.cache.values()].map((o) => ({
             id: o.id,
             type: o.type === 0 ? 'role' : 'member',
-            allow: o.allow.map((p) => p).slice(0, 30),
-            deny: o.deny.map((p) => p).slice(0, 30),
+            // Discord.js exposes these as PermissionsBitField objects.
+            // They are iterable, but unlike plain arrays they have no .map().
+            allow: [...o.allow].slice(0, 30),
+            deny: [...o.deny].slice(0, 30),
           }))
         : [];
       return {
