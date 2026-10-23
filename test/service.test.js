@@ -42,9 +42,9 @@ function fakeInteraction({ guild, userId, prompt, dryRun = false }) {
     user: { id: userId },
     guild,
     options: {
-      getPrompt: () => prompt,
+      // Match the real Discord.js CommandInteractionOptionResolver API.
+      getString: (name) => (name === 'prompt' ? prompt : null),
       getBoolean: (name) => (name === 'dry_run' ? dryRun : null),
-      getDryRun: () => dryRun,
     },
     customId: null,
     deferred: false,

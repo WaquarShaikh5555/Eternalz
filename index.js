@@ -7,6 +7,12 @@ const { getConfig, validate, describe } = require('./src/config/env');
 const { createLogger } = require('./src/core/logger');
 const { initRuntime, attachClient, runtime } = require('./src/runtime');
 const { handlePlanButton } = require('./src/admin/service');
+const {
+  isConversationButton,
+  isConversationModal,
+  handleConversationButton,
+  handleConversationModal,
+} = require('./src/admin/interactions');
 const { registerEvents } = require('./src/discord/events');
 const { toError } = require('./src/core/errors');
 
@@ -128,9 +134,61 @@ client.once('ready', () => {
   registerEvents(client, runtime);
 });
 
-// Listen for interactions (slash commands and confirmation buttons)
+// Listen for interactions (slash commands, confirmation buttons and follow-ups)
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isModalSubmit()) {
+    if (!isConversationModal(interaction.customId)) return;
+    try {
+      await handleConversationModal({
+        interaction,
+        guild: interaction.guild,
+        config: runtime.config,
+        storage: runtime.storage,
+        audit: runtime.audit,
+        logger: logger.child('admin'),
+        limiter: runtime.limiter,
+        cooldown: runtime.cooldown,
+        provider: runtime.provider,
+        client,
+      });
+    } catch (error) {
+      const err = toError(error);
+      logger.error(`AI follow-up failed: ${err.message}`);
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply({ content: '⚠️ Something went wrong with that follow-up.' });
+        } else {
+          await interaction.reply({
+            content: '⚠️ Something went wrong with that follow-up.',
+            ephemeral: true,
+          });
+        }
+      } catch {
+        /* the interaction is gone */
+      }
+    }
+    return;
+  }
+
   if (interaction.isButton()) {
+    if (isConversationButton(interaction.customId)) {
+      try {
+        await handleConversationButton(interaction);
+      } catch (error) {
+        const err = toError(error);
+        logger.error(`AI conversation button failed: ${err.message}`);
+        try {
+          await interaction.reply({
+            content: '⚠️ Could not open the follow-up. Please run `/ai` again.',
+            ephemeral: true,
+          });
+        } catch {
+          /* the interaction is gone */
+        }
+      }
+      return;
+    }
+
     if (!String(interaction.customId).startsWith('ai_admin:')) return;
     try {
       await handlePlanButton({
