@@ -1,10 +1,21 @@
 {
   "name": "Eternlz",
-  "version": "1.0.0",
-  "description": "A Professional Bot Made By Waquar Shaikh",
-  "main": "bot.js",
+  "version": "1.1.0",
+  "description": "A Professional Discord Bot with AI-powered server administration",
+  "main": "index.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node index.js",
+    "dev": "node index.js",
+    "register": "node config/deploy-commands.js",
+    "register:guild": "node config/deploy-commands.js --guild",
+    "register:global": "node config/deploy-commands.js --global",
+    "test": "node --test \"test/*.test.js\"",
+    "check": "node --check index.js && node --check webserver.js && node --check config/deploy-commands.js",
+    "verify": "npm run check && npm test",
+    "test:watch": "node --test --watch \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20.11.0"
   },
   "dependencies": {
     "@discordjs/voice": "^0.18.0",

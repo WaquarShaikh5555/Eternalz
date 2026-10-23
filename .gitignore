@@ -1,2 +1,20 @@
+# Secrets - never commit
 .env
+.env.*
+!.env.example
 
+# Runtime data (SQLite database, JSON store)
+data/
+
+# Logs
+logs/
+*.log
+
+# Dependencies
+node_modules/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

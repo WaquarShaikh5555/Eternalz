@@ -2,14 +2,28 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
 
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-  .then(() => console.log('MongoDB connected!'))
-  .catch(err => console.log('MongoDB error:', err));
+const { getConfig, validate, describe } = require('./src/config/env');
+const { createLogger } = require('./src/core/logger');
+const { initRuntime, attachClient, runtime } = require('./src/runtime');
+const { handlePlanButton } = require('./src/admin/service');
+const { registerEvents } = require('./src/discord/events');
+const { toError } = require('./src/core/errors');
+
+const config = getConfig();
+const logger = createLogger({ level: config.logLevel, prefix: 'eternalz' });
+
+// Optional MongoDB connection - the bot runs fine without it.
+if (process.env.MONGO_URI) {
+  // eslint-disable-next-line global-require
+  const mongoose = require('mongoose');
+  mongoose
+    .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => logger.info('MongoDB connected!'))
+    .catch((err) => logger.warn(`MongoDB error: ${err.message}`));
+} else {
+  logger.info('MONGO_URI is not set - running without the optional database connection.');
+}
 
 // Create a new client instance
 const client = new Client({
@@ -40,7 +54,7 @@ const loadCommands = (dir) => {
       if (command.data && command.execute) {
         client.commands.set(command.data.name, command);
       } else {
-        console.log(`[WARNING] Command in ${file} missing "data" or "execute".`);
+        logger.warn(`[WARNING] Command in ${file} missing "data" or "execute".`);
       }
     }
   }
@@ -50,31 +64,103 @@ const loadCommands = (dir) => {
 const commandsPath = path.join(__dirname, 'commands');
 loadCommands(commandsPath);
 
-// Register commands with the Discord API
-const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
+/**
+ * Register the slash commands.
+ *
+ * Ordinary commands keep their historical global registration. Commands that
+ * are marked `guildOnly` (the AI administration ones) are registered directly
+ * in the configured target guild instead, which makes them appear instantly
+ * and keeps them out of unrelated servers.
+ */
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(config.discordToken);
 
-(async () => {
-  try {
-    console.log('Started refreshing application (/) commands.');
-
-    // Register slash commands globally (no guildId required)
-    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), {
-      body: client.commands.map(command => command.data.toJSON()),
-    });
-
-    console.log('Successfully reloaded application (/) commands.');
-  } catch (error) {
-    console.error(error);
+  const globalCommands = [];
+  const guildCommands = [];
+  for (const command of client.commands.values()) {
+    if (command.guildOnly && config.discordGuildId) guildCommands.push(command);
+    else globalCommands.push(command);
   }
-})();
+
+  try {
+    logger.info('Started refreshing application (/) commands.');
+
+    if (globalCommands.length) {
+      await rest.put(Routes.applicationCommands(config.discordClientId), {
+        body: globalCommands.map((command) => command.data.toJSON()),
+      });
+      logger.info(`Successfully reloaded ${globalCommands.length} global application command(s).`);
+    }
+
+    if (guildCommands.length) {
+      await rest.put(
+        Routes.applicationGuildCommands(config.discordClientId, config.discordGuildId),
+        {
+          body: guildCommands.map((command) => command.data.toJSON()),
+        },
+      );
+      logger.info(
+        `Successfully registered ${guildCommands.length} guild-scoped command(s) in ${config.discordGuildId}.`,
+      );
+    }
+  } catch (error) {
+    logger.error(`Could not register the slash commands: ${error.message}`);
+  }
+}
+
+if (config.registerCommandsOnStart) {
+  registerCommands();
+}
+
+// Prepare the shared services (storage, audit log, AI provider).
+initRuntime({ config })
+  .then(() => {
+    logger.info('Runtime services ready.', { summary: describe(config) });
+  })
+  .catch((err) => {
+    logger.error(`Could not initialise the runtime services: ${err.message}`);
+  });
 
 // When the bot is ready, it will log in the console
 client.once('ready', () => {
-  console.log('Bot is online!');
+  logger.info('Bot is online!');
+  attachClient(client);
+  registerEvents(client, runtime);
 });
 
-// Listen for interactions (slash commands)
+// Listen for interactions (slash commands and confirmation buttons)
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton()) {
+    if (!String(interaction.customId).startsWith('ai_admin:')) return;
+    try {
+      await handlePlanButton({
+        interaction,
+        guild: interaction.guild,
+        config: runtime.config,
+        storage: runtime.storage,
+        audit: runtime.audit,
+        logger: logger.child('admin'),
+        client,
+      });
+    } catch (error) {
+      const err = toError(error);
+      logger.error(`AI confirmation button failed: ${err.message}`);
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply({ content: '⚠️ Something went wrong while applying that plan.' });
+        } else {
+          await interaction.reply({
+            content: '⚠️ Something went wrong while applying that plan.',
+            ephemeral: true,
+          });
+        }
+      } catch {
+        /* the interaction is gone */
+      }
+    }
+    return;
+  }
+
   if (!interaction.isCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
@@ -84,13 +170,66 @@ client.on('interactionCreate', async (interaction) => {
   try {
     await command.execute(interaction);
   } catch (error) {
-    console.error(error);
-    await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
+    const err = toError(error);
+    logger.error(err);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: 'There was an error while executing this command!' });
+      } else {
+        await interaction.reply({
+          content: 'There was an error while executing this command!',
+          ephemeral: true,
+        });
+      }
+    } catch {
+      /* the interaction is gone */
+    }
   }
 });
 
-// Log in to Discord using the bot token from the .env file
-client.login(process.env.BOT_TOKEN);
+// Log in to Discord using the bot token from the .env file.
+// A failed login must produce a clear log line instead of an unhandled
+// rejection that kills the process.
+client.login(config.discordToken).catch((err) => {
+  logger.error(`Could not log in to Discord: ${err.message}`);
+  logger.error('Check DISCORD_TOKEN, and whether Discord is reachable from this host.');
+  setTimeout(() => process.exit(1), 10_000).unref();
+});
+
+// Keep the process alive but do not let a stray rejection silently kill it.
+process.on('unhandledRejection', (reason) => {
+  logger.error(
+    `Unhandled promise rejection: ${reason?.message || String(reason)}`,
+  );
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error(`Uncaught exception: ${err.message}`);
+  if (err.stack) logger.error(err.stack);
+  process.exit(1);
+});
+
+// Close the database cleanly so nothing is lost on a restart.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`Received ${signal} - shutting down.`);
+  try {
+    await require('./src/runtime').shutdownRuntime();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await client.destroy();
+  } catch {
+    /* ignore */
+  }
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Start the web server (to keep the bot alive)
 require('./webserver');
