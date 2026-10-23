@@ -85,8 +85,9 @@ function build(raw = process.env) {
     // Optional comma-separated "provider:baseUrl:model" fallbacks.
     aiFallbacks: clean(env.AI_FALLBACK_PROVIDERS, 500),
     aiTimeoutMs: toInt(env.AI_TIMEOUT_MS, 60_000),
-    aiMaxPlanningRounds: toInt(env.AI_MAX_PLANNING_ROUNDS, 3),
+    aiMaxPlanningRounds: toInt(env.AI_MAX_PLANNING_ROUNDS, 1),
     aiMaxActions: toInt(env.AI_MAX_ACTIONS, 25),
+    aiMaxOutputTokens: toInt(env.AI_MAX_OUTPUT_TOKENS, 512),
     aiTemperature: Number.parseFloat(env.AI_TEMPERATURE ?? '0.2'),
 
     // --- AI administration ---------------------------------------------
@@ -202,6 +203,7 @@ function describe(config = getConfig()) {
       auditChannelConfigured: Boolean(config.aiAuditChannelId),
       maxActions: config.aiMaxActions,
       planningRounds: config.aiMaxPlanningRounds,
+      maxOutputTokens: config.aiMaxOutputTokens,
     },
     storage: {
       driver: config.storageDriver,

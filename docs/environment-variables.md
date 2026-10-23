@@ -10,6 +10,7 @@
 | `AI_API_KEY` | Groq: <https://console.groq.com/keys> → **Create API Key** | same |
 | `AI_PROVIDER` | You choose it yourself: `groq` (recommended), `openrouter`, `gemini`, `openai` | same |
 | `AI_MODEL` | You choose it yourself: `openai/gpt-oss-120b` (recommended) | same |
+| `AI_MAX_OUTPUT_TOKENS` | Optional; keep `512` for Groq's free tier | same |
 | `AI_ADMIN_USER_IDS` | Discord app → right-click your profile → **Copy User ID** | same |
 | `AI_AUDIT_CHANNEL_ID` | Discord app → right-click a private channel → **Copy Channel ID** | same |
 | `AI_ADMIN_ENABLED` | You set it: `true` or `false` | same |
@@ -142,6 +143,8 @@ only (`/ai-audit` still works).
 ```
 AI_ADMIN_ENABLED=true        # false = turn /ai off completely
 AI_WRITE_ENABLED=true        # false = inspect and plan, but never change anything
+AI_MAX_PLANNING_ROUNDS=1     # keep free-tier requests small
+AI_MAX_OUTPUT_TOKENS=512     # completion budget per model call
 STORAGE_DRIVER=auto          # auto = SQLite when available, JSON otherwise
 DATA_DIR=./data              # where the database file lives
 PORT=3000                    # keep-alive web server

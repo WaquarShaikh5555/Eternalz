@@ -110,8 +110,10 @@ what is and is not supported.
    └─ 12. Audit                 database + optional private audit channel
 ```
 
-Two model calls are needed for a typical request (inspection + planning), more
-if the model needs to look something up first.
+Two model calls are used for a typical request (inspection + planning). The
+server overview, tool schemas, read results and completion budget are bounded
+so the normal flow fits free-provider token limits; read tools are used only
+when the overview lacks a needed detail.
 
 ---
 
@@ -212,7 +214,8 @@ environment-variable panel. **Never commit a filled-in `.env`.**
 | `AI_CONFIRM_TIMEOUT_MS` | `300000` | How long a plan stays confirmable |
 | `AI_REQUEST_COOLDOWN_MS` | `10000` | Minimum time between two requests from one user |
 | `AI_MAX_ACTIONS` | `25` | Maximum number of actions in one plan |
-| `AI_MAX_PLANNING_ROUNDS` | `3` | Maximum inspection rounds |
+| `AI_MAX_PLANNING_ROUNDS` | `1` | Maximum inspection rounds (keeps free-tier token use low) |
+| `AI_MAX_OUTPUT_TOKENS` | `512` | Maximum completion tokens per model call |
 | `AI_TIMEOUT_MS` | `60000` | Provider request timeout |
 | `AI_FALLBACK_PROVIDERS` | *(empty)* | e.g. `openrouter:https://openrouter.ai/api/v1:openrouter/free` |
 | `STORAGE_DRIVER` | `auto` | `auto`, `sqlite` or `json` |
@@ -244,6 +247,12 @@ AI_PROVIDER=groq
 AI_API_KEY=<your Groq key>
 AI_MODEL=openai/gpt-oss-120b
 ```
+
+You do **not** need a paid tier for ordinary requests. The planner sends a
+bounded server overview, compact tool schemas and at most 512 completion
+tokens per call. Keep `AI_MAX_OUTPUT_TOKENS=512` (or lower) on Groq's free
+tier; increasing it can make an otherwise small request exceed the 8,000 TPM
+budget. Free quotas can still be exhausted by frequent usage.
 
 Optional resilience — fall back to OpenRouter when Groq is rate limited:
 

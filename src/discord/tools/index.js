@@ -68,13 +68,16 @@ function validateToolCall(name, rawArgs) {
  * Convert tools into the OpenAI-compatible `tools` array.
  * @param {Array} tools
  */
-function toProviderTools(tools) {
+function toProviderTools(tools, options = {}) {
   return tools.map((tool) => ({
     type: 'function',
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      // Validation always uses the full local schema. Descriptions on every
+      // nested property are optional for the model and surprisingly expensive
+      // on free providers, so the planner can omit just those annotations.
+      parameters: options.compact ? withoutSchemaDescriptions(tool.parameters) : tool.parameters,
     },
   }));
 }
@@ -83,12 +86,26 @@ function toProviderTools(tools) {
  * Convert tools into the Gemini `functionDeclarations` array.
  * @param {Array} tools
  */
-function toGeminiDeclarations(tools) {
+function toGeminiDeclarations(tools, options = {}) {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
-    parameters: cleanSchemaForGemini(tool.parameters),
+    parameters: cleanSchemaForGemini(
+      options.compact ? withoutSchemaDescriptions(tool.parameters) : tool.parameters,
+    ),
   }));
+}
+
+/** Remove documentation annotations while preserving every validation rule. */
+function withoutSchemaDescriptions(schema) {
+  if (Array.isArray(schema)) return schema.map(withoutSchemaDescriptions);
+  if (!schema || typeof schema !== 'object') return schema;
+  const result = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === 'description') continue;
+    result[key] = withoutSchemaDescriptions(value);
+  }
+  return result;
 }
 
 /** Gemini rejects JSON Schema keywords it does not know - strip them. */

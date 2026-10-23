@@ -103,6 +103,7 @@ test('the OpenAI-compatible provider sends the expected request and parses tool 
     ],
     toolChoice: 'auto',
     temperature: 0.2,
+    maxTokens: 512,
   });
 
   const request = mock.requests[0];
@@ -114,6 +115,7 @@ test('the OpenAI-compatible provider sends the expected request and parses tool 
   assert.equal(request.body.messages[1].content, 'create a Support category');
   assert.equal(request.body.tools[0].function.name, 'create_category');
   assert.equal(request.body.tool_choice, 'auto');
+  assert.equal(request.body.max_tokens, 512);
   assert.equal(request.body.stream, false);
 
   assert.equal(response.toolCalls.length, 1);
@@ -174,6 +176,34 @@ test('a 429 becomes a quota error with the retry-after value', async () => {
       return true;
     },
   );
+  await mock.close();
+});
+
+test('a 413 gives a free-tier size explanation without demanding an upgrade', async () => {
+  const mock = await startServer([
+    {
+      status: 413,
+      body: { error: { message: 'Request too large; upgrade to Dev Tier' } },
+    },
+  ]);
+  const provider = new OpenAiCompatibleProvider({
+    apiKey: 'k',
+    baseUrl: mock.baseUrl,
+    model: 'm',
+    timeoutMs: 5000,
+  });
+
+  await assert.rejects(
+    () => provider.chat({ messages: [{ role: 'user', content: 'x' }] }),
+    (err) => {
+      assert.ok(err instanceof AiProviderError);
+      assert.equal(err.status, 413);
+      assert.match(err.message, /free-tier token budget/);
+      assert.doesNotMatch(err.message, /Dev Tier/);
+      return true;
+    },
+  );
+  assert.equal(mock.requests.length, 1, 'an oversized request must not be retried');
   await mock.close();
 });
 
