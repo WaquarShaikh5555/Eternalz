@@ -25,7 +25,7 @@ function renderWelcome(template, { user, guild }) {
 async function handleGuildMemberAdd(member, runtime) {
   const { guild, config, storage, logger } = runtime;
   if (!guild) return;
-  if (config.discordGuildId && guild.id !== config.discordGuildId) return;
+  if (!config.aiMultiGuild && config.discordGuildId && guild.id !== config.discordGuildId) return;
   if (member.user.bot) return;
 
   try {

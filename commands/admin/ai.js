@@ -7,8 +7,9 @@
  * validated plan and then executed through the official Discord API.
  *
  * Only the server owner and explicitly configured administrators may use this
- * command, and only in the configured target guild. Both checks happen in
- * application code, before the AI provider is contacted.
+ * command in the primary guild. Optional multi-guild mode additionally allows
+ * configured user ids where they own or administer the current server. All
+ * checks happen in application code before the AI provider is contacted.
  */
 
 const { SlashCommandBuilder, InteractionContextType } = require('discord.js');
@@ -19,8 +20,9 @@ const { renderAdminResult, renderAdminError } = require('../../src/admin/interac
 const { toError } = require('../../src/core/errors');
 
 module.exports = {
-  // Registered only in the configured target guild (see config/deploy-commands.js).
+  // Guild-scoped by default; globally registered only in explicit multi-guild mode.
   guildOnly: true,
+  multiGuild: true,
   requiresAi: true,
 
   data: new SlashCommandBuilder()

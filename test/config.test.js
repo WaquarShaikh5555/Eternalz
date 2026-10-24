@@ -72,6 +72,18 @@ test('the administrator id list accepts comma, space and mention formats', () =>
   ]);
 });
 
+test('multi-guild access is opt-in and warns without explicit admin user ids', () => {
+  assert.equal(build({}).aiMultiGuild, false);
+  const config = build({
+    DISCORD_TOKEN: 't',
+    DISCORD_CLIENT_ID: 'c',
+    DISCORD_GUILD_ID: 'g',
+    AI_MULTI_GUILD: 'true',
+  });
+  assert.equal(config.aiMultiGuild, true);
+  assert.ok(validate(config).warnings.some((warning) => /AI_MULTI_GUILD/.test(warning)));
+});
+
 test('the emergency switches default to enabled and can be turned off', () => {
   assert.equal(build({}).aiAdminEnabled, true);
   assert.equal(build({}).aiWriteEnabled, true);

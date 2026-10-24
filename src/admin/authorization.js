@@ -13,43 +13,83 @@
  * about what the bot is allowed to do.
  */
 
+const { PermissionFlagsBits, PermissionsBitField } = require('discord.js');
 const { AuthorizationError } = require('../core/errors');
+
+function configuredUsers(config) {
+  return Array.isArray(config.aiAdminUserIds) ? config.aiAdminUserIds : [];
+}
+
+function configuredRoles(config) {
+  return Array.isArray(config.aiAdminRoleIds) ? config.aiAdminRoleIds : [];
+}
+
+/** Prefer the fresh member supplied by the interaction, then the guild cache. */
+function resolveMember(guild, userId, suppliedMember = null) {
+  const suppliedId = suppliedMember?.user?.id || suppliedMember?.id;
+  if (suppliedMember && suppliedId === userId) return suppliedMember;
+  return guild.members?.cache?.get(userId) || null;
+}
+
+/**
+ * Check the requester's own Discord permissions in a non-primary guild.
+ * Handles both discord.js GuildMember objects and raw interaction members.
+ */
+function hasGuildManagementPermission(member) {
+  const value = member?.permissions;
+  if (value === undefined || value === null) return false;
+
+  try {
+    const permissions = typeof value.has === 'function'
+      ? value
+      : new PermissionsBitField(typeof value === 'string' ? BigInt(value) : value);
+    return permissions.has(PermissionFlagsBits.Administrator)
+      || permissions.has(PermissionFlagsBits.ManageGuild);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * @param {object} config
  * @param {import('discord.js').Guild} guild
  * @param {string} userId
+ * @param {object} [suppliedMember] fresh interaction member, when available
  * @returns {boolean}
  */
-function isGuildAdmin(config, guild, userId) {
+function isGuildAdmin(config, guild, userId, suppliedMember = null) {
   if (!guild || !userId) return false;
 
-  // 1. The configured target guild is the only guild where this works.
-  //    Without a target guild nothing is authorised at all.
+  // Keep a primary guild configured for backwards compatibility, guild-scoped
+  // status/audit commands and a safe single-server default.
   if (!config.discordGuildId) return false;
-  if (guild.id !== config.discordGuildId) return false;
 
-  // 2. The guild owner is always authorised.
-  if (guild.ownerId === userId) return true;
+  const member = resolveMember(guild, userId, suppliedMember);
+  const users = configuredUsers(config);
+  const roles = configuredRoles(config);
 
-  // 3. Explicitly configured administrator ids.
-  if (config.aiAdminUserIds.includes(userId)) return true;
-
-  // 4. Optional role-based administrators (opt-in, supplements the list above).
-  if (config.aiAdminRoleIds.length) {
-    const member = guild.members.cache.get(userId);
-    if (member && config.aiAdminRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
+  if (guild.id === config.discordGuildId) {
+    // Existing single-server rules remain unchanged in the primary guild.
+    if (guild.ownerId === userId) return true;
+    if (users.includes(userId)) return true;
+    if (roles.length && member && roles.some((roleId) => member.roles?.cache?.has(roleId))) {
       return true;
     }
+    return false;
   }
 
-  return false;
+  // Multi-guild access is deliberately opt-in and personal. Do not let every
+  // owner/admin of every guild spend the bot operator's AI quota, and never
+  // reuse primary-guild role IDs as authorization in another guild.
+  if (!config.aiMultiGuild || !users.includes(userId)) return false;
+
+  return guild.ownerId === userId || hasGuildManagementPermission(member);
 }
 
 /**
  * Throw unless the user may use AI administration in this guild.
  */
-function assertGuildAdmin(config, guild, userId) {
+function assertGuildAdmin(config, guild, userId, suppliedMember = null) {
   if (!config.aiAdminEnabled) {
     throw new AuthorizationError('AI administration is currently disabled on this server.');
   }
@@ -58,10 +98,15 @@ function assertGuildAdmin(config, guild, userId) {
       'AI administration is not configured: the bot owner has to set DISCORD_GUILD_ID so the bot knows which server it may administer.',
     );
   }
-  if (guild.id !== config.discordGuildId) {
+  if (guild.id !== config.discordGuildId && !config.aiMultiGuild) {
     throw new AuthorizationError('AI administration is restricted to the configured server.');
   }
-  if (!isGuildAdmin(config, guild, userId)) {
+  if (!isGuildAdmin(config, guild, userId, suppliedMember)) {
+    if (guild.id !== config.discordGuildId) {
+      throw new AuthorizationError(
+        'In other servers, /ai is only available to configured AI administrators who are the server owner or have Administrator or Manage Server.',
+      );
+    }
     throw new AuthorizationError(
       'Only the server owner and explicitly configured administrators can use AI administration.',
     );
@@ -70,19 +115,31 @@ function assertGuildAdmin(config, guild, userId) {
 }
 
 /** A short explanation of why a user was refused (used in audit logs). */
-function describeRefusal(config, guild, userId) {
+function describeRefusal(config, guild, userId, suppliedMember = null) {
   if (!config.aiAdminEnabled) return 'ai administration disabled';
-  if (config.discordGuildId && guild?.id !== config.discordGuildId) return 'wrong guild';
-  if (guild?.ownerId === userId) return 'guild owner';
-  if (config.aiAdminUserIds.includes(userId)) return 'configured administrator';
-  if (
-    config.aiAdminRoleIds.length &&
-    guild?.members?.cache?.get(userId) &&
-    config.aiAdminRoleIds.some((roleId) => guild.members.cache.get(userId).roles.cache.has(roleId))
-  ) {
-    return 'administrator role';
+  if (!guild) return 'not authorised';
+
+  const isPrimaryGuild = guild.id === config.discordGuildId;
+  if (!isPrimaryGuild && !config.aiMultiGuild) return 'wrong guild';
+  if (isGuildAdmin(config, guild, userId, suppliedMember)) {
+    if (guild.ownerId === userId) return 'guild owner';
+    if (isPrimaryGuild && configuredRoles(config).length) {
+      const member = resolveMember(guild, userId, suppliedMember);
+      if (member && configuredRoles(config).some((roleId) => member.roles?.cache?.has(roleId))) {
+        return 'administrator role';
+      }
+    }
+    return 'configured administrator';
+  }
+  if (!isPrimaryGuild && configuredUsers(config).includes(userId)) {
+    return 'missing server administrator permission';
   }
   return 'not authorised';
 }
 
-module.exports = { isGuildAdmin, assertGuildAdmin, describeRefusal };
+module.exports = {
+  isGuildAdmin,
+  assertGuildAdmin,
+  describeRefusal,
+  hasGuildManagementPermission,
+};

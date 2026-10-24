@@ -74,6 +74,7 @@ test('the entry is mirrored to the audit channel when one is configured', async 
 
   assert.equal(sent.length, 1);
   assert.match(sent[0].content, /AI admin event/);
+  assert.match(sent[0].content, /Server ID.*guild-1/);
   assert.match(sent[0].content, /create a Support category/);
   await store.close();
 });

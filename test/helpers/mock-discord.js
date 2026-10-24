@@ -158,6 +158,7 @@ function makeMember(guild, options = {}) {
     },
     displayName: options.displayName || options.username || `user${id}`,
     nickname: options.nickname || null,
+    permissions: makePermissions(options.permissions || []),
     roles: {
       cache: roleCache,
       get highest() {

@@ -50,6 +50,13 @@ test('the AI administration commands are scoped to the target guild', () => {
   }
 });
 
+test('only /ai opts into global registration for multi-guild mode', () => {
+  const commands = loadCommands(COMMANDS_DIR);
+  assert.equal(commands.get('ai').multiGuild, true);
+  assert.notEqual(commands.get('ai-status').multiGuild, true);
+  assert.notEqual(commands.get('ai-audit').multiGuild, true);
+});
+
 test('the ordinary commands stay globally available', () => {
   const commands = loadCommands(COMMANDS_DIR);
   for (const name of ['ping', 'meme', 'poll', 'userinfo', 'search', 'aichat', 'mostactive']) {

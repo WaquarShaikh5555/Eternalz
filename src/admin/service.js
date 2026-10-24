@@ -60,17 +60,18 @@ async function handleAdminRequest(options) {
 
   const requesterId = interaction.user.id;
   const guildId = guild.id;
+  const actorMember = interaction.member || guild.members?.cache?.get(requesterId) || null;
 
   // --- 1. Authorisation BEFORE the AI provider is contacted ---------------
   try {
-    assertGuildAdmin(config, guild, requesterId);
+    assertGuildAdmin(config, guild, requesterId, actorMember);
   } catch (err) {
     await audit?.log({
       guildId,
       requesterId,
       event: 'rejected',
       prompt: extractPrompt(interaction) || null,
-      summary: { reason: describeRefusal(config, guild, requesterId) },
+      summary: { reason: describeRefusal(config, guild, requesterId, actorMember) },
       notify: false,
     });
     throw err;
@@ -118,7 +119,6 @@ async function handleAdminRequest(options) {
   await progress('🔍 Reading the current server and understanding your request…');
   const snapshot = buildGuildSnapshot(guild, guild.members?.me);
 
-  const actorMember = guild.members?.cache?.get(requesterId) || null;
   const ctx = {
     guild,
     client: options.client,
@@ -253,6 +253,7 @@ async function handlePlanButton(options) {
   const { action, planId } = parsed;
   const requesterId = interaction.user.id;
   const guildId = guild.id;
+  const actorMember = interaction.member || guild.members?.cache?.get(requesterId) || null;
 
   const plan = await loadPlan(storage, planId);
   if (!plan) {
@@ -325,7 +326,7 @@ async function handlePlanButton(options) {
   }
 
   // --- Re-authorise before executing ---------------------------------------
-  if (!isGuildAdmin(config, guild, requesterId)) {
+  if (!isGuildAdmin(config, guild, requesterId, actorMember)) {
     await storage.updatePlan(plan.id, { status: STATUS.CANCELLED });
     await interaction.reply({
       content: 'Your administrator access changed, so this plan was cancelled.',
@@ -361,7 +362,6 @@ async function handlePlanButton(options) {
   await interaction.deferUpdate();
   await storage.updatePlan(plan.id, { status: STATUS.CONFIRMED, confirmedAt: Date.now() });
 
-  const actorMember = guild.members?.cache?.get(requesterId) || null;
   const ctx = {
     guild,
     client,
@@ -434,7 +434,7 @@ async function executeActions({ actions, ctx, config, logger, guild, requesterId
     config,
     logger,
     authorize: () => {
-      assertGuildAdmin(config, guild, requesterId);
+      assertGuildAdmin(config, guild, requesterId, ctx.actorMember);
     },
   });
 }

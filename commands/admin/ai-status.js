@@ -50,6 +50,7 @@ module.exports = {
         value: [
           `guild owner: ${guild?.ownerId ? `<@${guild.ownerId}>` : 'unknown'}`,
           `configured admins: ${summary.ai.adminUserCount}`,
+          `scope: ${summary.ai.multiGuild ? 'multi-guild for configured admins' : 'primary server only'}`,
           summary.ai.adminRoleCount ? `configured admin roles: ${summary.ai.adminRoleCount}` : null,
         ]
           .filter(Boolean)

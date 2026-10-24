@@ -10,6 +10,7 @@ function config(overrides = {}) {
   return {
     aiAdminEnabled: true,
     aiWriteEnabled: true,
+    aiMultiGuild: false,
     discordGuildId: 'guild-1',
     aiAdminUserIds: [],
     aiAdminRoleIds: [],
@@ -55,6 +56,73 @@ test('AI administration is restricted to the configured guild', () => {
   const guild = makeGuild({ id: 'other-guild', ownerId: 'owner-1' });
   const cfg = config({ discordGuildId: 'guild-1', aiAdminUserIds: ['admin-1'] });
   assert.equal(isGuildAdmin(cfg, guild, 'owner-1'), false);
+  assert.equal(isGuildAdmin(cfg, guild, 'admin-1'), false);
+});
+
+test('multi-guild mode allows a configured user with Administrator in another guild', () => {
+  const guild = makeGuild({
+    id: 'other-guild',
+    ownerId: 'someone-else',
+    members: [{ id: 'admin-1', username: 'admin', permissions: ['Administrator'] }],
+  });
+  const cfg = config({ aiMultiGuild: true, aiAdminUserIds: ['admin-1'] });
+  assert.equal(isGuildAdmin(cfg, guild, 'admin-1'), true);
+});
+
+test('multi-guild mode also accepts Manage Server and fresh interaction permissions', () => {
+  const guild = makeGuild({ id: 'other-guild', ownerId: 'someone-else' });
+  const cfg = config({ aiMultiGuild: true, aiAdminUserIds: ['admin-1'] });
+  const interactionMember = {
+    user: { id: 'admin-1' },
+    permissions: String(32n), // ManageGuild, as raw interaction members expose a string.
+  };
+  assert.equal(isGuildAdmin(cfg, guild, 'admin-1', interactionMember), true);
+});
+
+test('multi-guild mode allows a configured user who owns the other guild', () => {
+  const guild = makeGuild({ id: 'other-guild', ownerId: 'admin-1' });
+  const cfg = config({ aiMultiGuild: true, aiAdminUserIds: ['admin-1'] });
+  assert.equal(isGuildAdmin(cfg, guild, 'admin-1'), true);
+});
+
+test('multi-guild mode does not authorize every server owner or administrator', () => {
+  const ownerGuild = makeGuild({ id: 'other-guild', ownerId: 'other-owner' });
+  const adminGuild = makeGuild({
+    id: 'admin-guild',
+    ownerId: 'someone-else',
+    members: [{ id: 'other-admin', permissions: ['Administrator'] }],
+  });
+  const cfg = config({ aiMultiGuild: true, aiAdminUserIds: ['admin-1'] });
+  assert.equal(isGuildAdmin(cfg, ownerGuild, 'other-owner'), false);
+  assert.equal(isGuildAdmin(cfg, adminGuild, 'other-admin'), false);
+});
+
+test('a configured user without a management permission is rejected outside the primary guild', () => {
+  const guild = makeGuild({
+    id: 'other-guild',
+    ownerId: 'someone-else',
+    members: [{ id: 'admin-1', permissions: ['ManageChannels'] }],
+  });
+  const cfg = config({ aiMultiGuild: true, aiAdminUserIds: ['admin-1'] });
+  assert.equal(isGuildAdmin(cfg, guild, 'admin-1'), false);
+  assert.throws(
+    () => assertGuildAdmin(cfg, guild, 'admin-1'),
+    /Administrator or Manage Server/,
+  );
+});
+
+test('primary-guild role ids are not reused as multi-guild authorization', () => {
+  const guild = makeGuild({
+    id: 'other-guild',
+    ownerId: 'someone-else',
+    roles: [{ id: 'role-mod', name: 'Moderator' }],
+    members: [{ id: 'admin-1', roleIds: ['role-mod'], permissions: ['ManageChannels'] }],
+  });
+  const cfg = config({
+    aiMultiGuild: true,
+    aiAdminUserIds: ['admin-1'],
+    aiAdminRoleIds: ['role-mod'],
+  });
   assert.equal(isGuildAdmin(cfg, guild, 'admin-1'), false);
 });
 

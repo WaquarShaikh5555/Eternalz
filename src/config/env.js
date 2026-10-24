@@ -93,6 +93,9 @@ function build(raw = process.env) {
     // --- AI administration ---------------------------------------------
     aiAdminEnabled: toBool(env.AI_ADMIN_ENABLED, true),
     aiWriteEnabled: toBool(env.AI_WRITE_ENABLED, true),
+    // Opt-in: configured user ids may also use /ai in guilds where they are
+    // the owner or have Administrator / ManageGuild. Off by default.
+    aiMultiGuild: toBool(env.AI_MULTI_GUILD, false),
     aiAdminUserIds: toIdList(env.AI_ADMIN_USER_IDS),
     aiAdminRoleIds: toIdList(env.AI_ADMIN_ROLE_IDS),
     aiAuditChannelId: env.AI_AUDIT_CHANNEL_ID || '',
@@ -147,12 +150,17 @@ function validate(config = getConfig()) {
   }
   if (!config.discordGuildId) {
     errors.push(
-      'DISCORD_GUILD_ID is not set (AI administration is restricted to a single target guild).',
+      'DISCORD_GUILD_ID is not set (a primary guild is required for AI administration).',
     );
   }
   if (!config.aiAdminUserIds.length) {
     warnings.push(
       'AI_ADMIN_USER_IDS is empty - only the guild owner will be able to use /ai.',
+    );
+  }
+  if (config.aiMultiGuild && !config.aiAdminUserIds.length) {
+    warnings.push(
+      'AI_MULTI_GUILD=true needs AI_ADMIN_USER_IDS; no one is authorised outside the primary guild without an explicit user id.',
     );
   }
   if (config.aiAdminEnabled) {
@@ -198,6 +206,7 @@ function describe(config = getConfig()) {
       baseUrl: config.aiBaseUrl,
       model: config.aiModel,
       apiKeyConfigured: Boolean(config.aiApiKey),
+      multiGuild: Boolean(config.aiMultiGuild),
       adminUserCount: config.aiAdminUserIds.length,
       adminRoleCount: config.aiAdminRoleIds.length,
       auditChannelConfigured: Boolean(config.aiAuditChannelId),

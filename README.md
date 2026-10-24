@@ -96,7 +96,7 @@ what is and is not supported.
 ```
 /ai prompt "create a Support category with a tickets channel"
    │
-   ├─ 1. Authorisation          owner / configured admins, target guild only
+   ├─ 1. Authorisation          owner / configured admins, single or opt-in multi-guild
    ├─ 2. Rate limit + cooldown  per user
    ├─ 3. Snapshot               the real server state is read
    ├─ 4. Inspection phase       the model may call read-only tools
@@ -136,8 +136,10 @@ never from what the model says about the action.
   `AI_ADMIN_USER_IDS` may use `/ai`. Role checks alone are never enough.
 * **Checked twice.** Authorisation is verified in code *before* the AI provider
   is contacted and again immediately before every single action is executed.
-* **One target guild.** The bot refuses to act in any server other than
-  `DISCORD_GUILD_ID`.
+* **One target guild by default.** The bot refuses to act in any server other
+  than `DISCORD_GUILD_ID`. With explicit `AI_MULTI_GUILD=true`, only configured
+  user ids can also use `/ai` in other guilds where they own the server or have
+  Administrator / Manage Server; primary-guild role IDs never carry over.
 * **Fixed tool allowlist.** The model can only request the tools in
   `src/discord/tools/`. Unknown tool names are rejected.
 * **Strict schemas.** Every argument is validated (types, enums, ranges,
@@ -191,7 +193,7 @@ environment-variable panel. **Never commit a filled-in `.env`.**
 | --- | --- |
 | `DISCORD_TOKEN` | Bot token from the Developer Portal |
 | `DISCORD_CLIENT_ID` | Application id from the Developer Portal |
-| `DISCORD_GUILD_ID` | The only server where AI administration is allowed |
+| `DISCORD_GUILD_ID` | Primary server for AI administration and guild-scoped status/audit commands |
 
 ### Required for AI administration
 
@@ -207,7 +209,8 @@ environment-variable panel. **Never commit a filled-in `.env`.**
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `AI_ADMIN_ROLE_IDS` | *(empty)* | Extra administrators by role |
+| `AI_ADMIN_ROLE_IDS` | *(empty)* | Extra administrators by role in the primary guild |
+| `AI_MULTI_GUILD` | `false` | Allow configured user ids in other guilds they own or administer |
 | `AI_AUDIT_CHANNEL_ID` | *(empty)* | Private channel that receives the audit trail |
 | `AI_ADMIN_ENABLED` | `true` | Master switch for `/ai` |
 | `AI_WRITE_ENABLED` | `true` | Set to `false` to plan but never write |
@@ -326,6 +329,34 @@ Use `npm run register:global` to register everything globally instead, and
 
 The bot also registers the commands automatically at start-up, so this step is
 only needed once (or after adding a command).
+
+### Using `/ai` in several servers
+
+Keep `DISCORD_GUILD_ID` set to your primary server, then explicitly enable
+multi-guild access and list your own Discord user id:
+
+```env
+AI_MULTI_GUILD=true
+AI_ADMIN_USER_IDS=<your Discord user id>
+```
+
+In every other server, the configured user must be the server owner or have
+**Administrator** or **Manage Server**. Merely being an administrator is not
+enough: the user id must also be in `AI_ADMIN_USER_IDS`. This prevents every
+admin of every server from using your AI quota. `AI_ADMIN_ROLE_IDS` applies only
+to the primary server.
+
+Register `/ai` globally after changing the setting:
+
+```bash
+npm run register:global
+```
+
+Alternatively, restart with `REGISTER_COMMANDS_ON_START=true`; automatic
+startup registration also moves `/ai` to global registration. Discord global
+commands can take up to an hour to appear. Invite the bot to each server and
+grant the bot the permissions needed for the requested changes. Use
+`AI_MULTI_GUILD=false` and re-register to restore single-server access.
 
 ### 5. Make sure the bot is above the roles it manages
 
