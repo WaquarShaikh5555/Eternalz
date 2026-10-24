@@ -24,11 +24,17 @@ function byNameOrId(cache, input, { label = 'target', type = 'object' } = {}) {
   const raw = String(input ?? '').trim();
   if (!raw) throw new ValidationError(`A ${label} is required.`);
 
-  // Direct snowflake id.
-  if (/^\d{15,25}$/.test(raw)) {
-    const found = cache.get(raw);
+  // Cache lookup also supports test/adaptor ids that are not Discord snowflakes.
+  const direct = cache.get(raw);
+  if (direct) return direct;
+
+  // Direct snowflake ids and Discord mention forms (<#id>, <@&id>, <@id>).
+  const mentionId = raw.match(/^<(?:#|@&|@!?)(\d{15,25})>$/)?.[1] || null;
+  const id = mentionId || (/^\d{15,25}$/.test(raw) ? raw : null);
+  if (id) {
+    const found = cache.get(id);
     if (found) return found;
-    throw new NotFoundError(`No ${label} with id ${raw} exists in this server.`);
+    throw new NotFoundError(`No ${label} with id ${id} exists in this server.`);
   }
 
   const needle = normalise(raw);
@@ -103,12 +109,17 @@ async function resolveMember(guild, input) {
   const cached = guild.members?.cache?.get?.(raw);
   if (cached) return cached;
 
-  if (/^\d{15,25}$/.test(raw)) {
-    const member = await guild.members.fetch(raw).catch(() => null);
+  const mentionId = raw.match(/^<@!?(\d{15,25})>$/)?.[1] || null;
+  const userId = mentionId || (/^\d{15,25}$/.test(raw) ? raw : null);
+  if (userId) {
+    const mentioned = guild.members?.cache?.get?.(userId);
+    if (mentioned) return mentioned;
+    const member = await guild.members.fetch(userId).catch(() => null);
     if (member) return member;
-    throw new NotFoundError(`No member with id ${raw} is in this server.`);
+    throw new NotFoundError(`No member with id ${userId} is in this server.`);
   }
-  const needle = normalise(raw);
+  // Models commonly preserve the @ when a prompt says "@username".
+  const needle = normalise(raw.replace(/^@/, ''));
   const members = await guild.members.fetch();
   const matches = [...members.values()].filter(
     (m) =>

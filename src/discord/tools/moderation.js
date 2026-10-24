@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * Moderation tools: ban and kick.
+ * Moderation tools: mute/timeout, ban, kick, unban and bulk deletion.
  *
- * Both are always classified as high-risk and therefore always require an
- * explicit confirmation before they are executed.
+ * Destructive moderation is always classified as high-risk and therefore
+ * requires explicit confirmation before it is executed.
  */
 
 const { resolveChannel, resolveMember } = require('../resolve');
@@ -98,7 +98,7 @@ const kickMember = {
 const timeoutMember = {
   name: 'timeout_member',
   description:
-    'Temporarily stop a member from talking (Discord "timeout", also called a communication timeout). Use this instead of kicking when the member should be able to come back later. Requires explicit confirmation.',
+    'Mute or time out a member so they temporarily cannot talk. Convert hours/days to minutes. Use this instead of kicking when the member should be able to come back later. Requires explicit confirmation.',
   mutating: true,
   destructive: true,
   parameters: {
@@ -109,11 +109,12 @@ const timeoutMember = {
         type: 'integer',
         minimum: 1,
         maximum: 40320,
-        description: 'How long the timeout lasts, in minutes (1 to 40320 = 28 days).',
+        default: 5,
+        description: 'How long the mute/timeout lasts, in minutes (1 to 40320 = 28 days). Defaults to 5.',
       },
       reason: { type: 'string', maxLength: 500, description: 'Reason shown in the audit log.' },
     },
-    required: ['member', 'minutes'],
+    required: ['member'],
     additionalProperties: false,
   },
   async execute(ctx, args) {
@@ -135,8 +136,8 @@ const timeoutMember = {
     await member.timeout(ms, reason);
 
     const verified = await member.fetch().catch(() => null);
-    if (verified && verified.communicationDisabledUntilTimestamp
-        && verified.communicationDisabledUntilTimestamp <= Date.now()) {
+    if (!verified?.communicationDisabledUntilTimestamp
+        || verified.communicationDisabledUntilTimestamp <= Date.now()) {
       throw new Error('The timeout did not take effect.');
     }
 
@@ -178,7 +179,8 @@ const unbanMember = {
     const reason = args.reason || 'Unbanned by the Eternalz AI administrator.';
 
     const raw = String(args.member).trim();
-    let userId = /^\d{15,25}$/.test(raw) ? raw : null;
+    const mentionId = raw.match(/^<@!?(\d{15,25})>$/)?.[1] || null;
+    let userId = mentionId || (/^\d{15,25}$/.test(raw) ? raw : null);
 
     // Look up the ban list first: it confirms the ban really exists and it
     // also lets us accept a username instead of an id.

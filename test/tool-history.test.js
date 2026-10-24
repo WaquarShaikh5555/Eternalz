@@ -111,6 +111,56 @@ test('read inspection history cannot invalidate a write-only planning request', 
   )));
 });
 
+test('Gemini never receives a model-ending request after prose inspection', async (t) => {
+  const requests = [];
+  const server = http.createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const payload = JSON.parse(body);
+    requests.push(payload);
+
+    if (requests.length > 1 && payload.contents.at(-1)?.role === 'model') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: { message: 'Requests ending with a model turn are not supported.' },
+      }));
+      return;
+    }
+
+    const parts = requests.length === 1
+      ? [{ text: 'I have enough information to plan.' }]
+      : [{ functionCall: { name: 'create_category', args: { name: 'Support' } } }];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      candidates: [{ finishReason: 'STOP', content: { role: 'model', parts } }],
+    }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const provider = new GeminiProvider({
+    apiKey: 'test-key',
+    baseUrl: `http://127.0.0.1:${port}/v1beta`,
+    model: 'test-model',
+    timeoutMs: 5000,
+  });
+  const guild = makeGuild();
+  const plan = await createPlan({
+    provider,
+    config: CONFIG,
+    ctx: { guild, storage: {}, logger: null },
+    prompt: 'Create a Support category',
+    snapshot: buildGuildSnapshot(guild, guild.members.me),
+  });
+
+  assert.equal(plan.actions[0].tool, 'create_category');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].contents.at(-1).role, 'user');
+  assert.match(requests[1].contents.at(-1).parts[0].text, /Continue with the current request/);
+});
+
 test('available native tool exchanges remain native and the input is not mutated', () => {
   const tools = [
     { type: 'function', function: { name: 'get_server_snapshot' } },
@@ -133,6 +183,33 @@ test('available native tool exchanges remain native and the input is not mutated
   assert.equal(result[2].toolCalls[0].name, 'get_server_snapshot');
   assert.equal(result[3].role, 'tool');
   assert.deepEqual(messages, before);
+});
+
+test('Gemini coalesces adjacent model turns and parallel function responses', () => {
+  const provider = new GeminiProvider({ apiKey: 'test-key', model: 'test-model' });
+  const wire = provider.toWireRequest({
+    messages: [
+      { role: 'user', content: 'Inspect' },
+      { role: 'assistant', content: 'First thought' },
+      { role: 'assistant', content: 'Second thought' },
+      {
+        role: 'assistant',
+        content: null,
+        toolCalls: [
+          { id: 'read-1', name: 'list_channels', arguments: {} },
+          { id: 'read-2', name: 'list_channels', arguments: {} },
+        ],
+      },
+      { role: 'tool', toolCallId: 'read-1', name: 'list_channels', content: '{}' },
+      { role: 'tool', toolCallId: 'read-2', name: 'list_channels', content: '{}' },
+    ],
+    tools: [{ name: 'list_channels', parameters: { type: 'object' } }],
+  });
+
+  assert.deepEqual(wire.contents.map((content) => content.role), ['user', 'model', 'user']);
+  assert.equal(wire.contents[1].parts.length, 4);
+  assert.equal(wire.contents[2].parts.length, 2);
+  assert.ok(wire.contents[2].parts.every((part) => part.functionResponse));
 });
 
 test('Gemini also flattens a historical call absent from its current catalogue', () => {

@@ -33,6 +33,7 @@ const {
   STATUS,
 } = require('./confirmation');
 const { AuthorizationError, toError } = require('../core/errors');
+const { loadRecentRequestContext } = require('./request-context');
 
 /**
  * Read the real Discord slash-command option.
@@ -122,6 +123,13 @@ async function handleAdminRequest(options) {
   // --- 3. Inspect the real server state ------------------------------------
   await progress('🔍 Reading the current server and understanding your request…');
   const snapshot = buildGuildSnapshot(guild, guild.members?.me);
+  const recentContext = await loadRecentRequestContext(
+    storage,
+    guildId,
+    requesterId,
+    snapshot,
+    logger,
+  );
 
   const ctx = {
     guild,
@@ -142,6 +150,7 @@ async function handleAdminRequest(options) {
     ctx,
     prompt,
     snapshot,
+    recentContext,
     logger,
   });
 

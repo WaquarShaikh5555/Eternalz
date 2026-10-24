@@ -65,11 +65,15 @@ subscriptions, role mention permissions for other roles.
 
 | Capability | Tool | Confirmation |
 | --- | --- | --- |
-| Timeout (mute) a member for 1 minute – 28 days | `timeout_member` | one confirmation |
+| Mute / timeout a member for 1 minute – 28 days (5 minutes if omitted) | `timeout_member` | one confirmation |
 | Kick a member | `kick_member` | one confirmation |
 | Ban a member (optionally deleting 0–7 days of messages) | `ban_member` | one confirmation |
 | Unban a user | `unban_member` | automatic |
 | Bulk delete 1–100 recent messages in a channel | `delete_messages` | one confirmation |
+
+Member targets accept a username, display name, numeric user id, or Discord
+`<@user-id>` mention. The bot's permission and role hierarchy are checked again
+before execution.
 
 **Not implemented:** timeout removal (clearing a timeout), warning systems,
 message pinning, automod rule editing, prune by role.

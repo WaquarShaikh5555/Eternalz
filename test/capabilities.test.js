@@ -93,6 +93,27 @@ test('a timeout of more than 28 days is rejected by the schema', () => {
   assert.match(result.errors.join(' '), /40320/);
 });
 
+test('a mute without a duration receives a validated five-minute default', () => {
+  const { validateToolCall, toGeminiDeclarations, getTool: tool } = require('../src/discord/tools');
+  const result = validateToolCall('timeout_member', { member: 'x' });
+  assert.equal(result.ok, true);
+  assert.equal(result.args.minutes, 5);
+
+  const declaration = toGeminiDeclarations([tool('timeout_member')])[0];
+  assert.equal(declaration.parameters.properties.minutes.default, undefined);
+  assert.equal(declaration.parameters.required.includes('minutes'), false);
+});
+
+test('a timeout is not reported as successful when Discord shows no timeout', async () => {
+  const guild = makeGuild({ members: [{ id: 'u1', username: 'spammer' }] });
+  const member = guild.members.cache.get('u1');
+  member.fetch = async () => ({ ...member, communicationDisabledUntilTimestamp: null });
+  await assert.rejects(
+    () => getTool('timeout_member').execute(ctx(guild), { member: 'spammer', minutes: 5 }),
+    /did not take effect/,
+  );
+});
+
 test('a timeout needs confirmation', () => {
   const result = assessAction({ tool: 'timeout_member', args: { member: 'x', minutes: 5 }, toolDef: getTool('timeout_member') });
   assert.equal(result.level, RISK.CONFIRM);
