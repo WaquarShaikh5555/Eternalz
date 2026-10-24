@@ -35,35 +35,50 @@ class GeminiProvider {
     const messages = sanitizeToolHistory(request.messages, request.tools);
     const system = messages.filter((m) => m.role === 'system');
     const contents = [];
+    const appendContent = (role, parts) => {
+      const previous = contents.at(-1);
+      // Gemini multi-turn history alternates user/model. Coalescing also
+      // groups parallel function responses into the single user turn Gemini
+      // expects after a model's parallel function calls.
+      if (previous?.role === role) previous.parts.push(...parts);
+      else contents.push({ role, parts });
+    };
 
     for (const message of messages) {
       if (message.role === 'system') continue;
       if (message.role === 'tool') {
-        contents.push({
-          role: 'user',
-          parts: [
-            {
-              functionResponse: {
-                name: message.name || message.toolCallId,
-                response: { result: message.content },
-              },
+        appendContent('user', [
+          {
+            functionResponse: {
+              name: message.name || message.toolCallId,
+              response: { result: message.content },
             },
-          ],
-        });
+          },
+        ]);
         continue;
       }
       if (message.role === 'assistant' && message.toolCalls?.length) {
-        contents.push({
-          role: 'model',
-          parts: message.toolCalls.map((call) => ({
-            functionCall: { name: call.name, args: call.arguments ?? {} },
-          })),
-        });
+        appendContent('model', message.toolCalls.map((call) => ({
+          functionCall: { name: call.name, args: call.arguments ?? {} },
+        })));
         continue;
       }
+      appendContent(message.role === 'assistant' ? 'model' : 'user', [
+        { text: String(message.content ?? '') },
+      ]);
+    }
+
+    // Gemini rejects generateContent requests whose final content is a model
+    // turn ("Requests ending with a model turn are not supported"). The
+    // planner can legitimately finish inspection with prose before switching
+    // to the write-tool catalogue, so terminate that sequence with an explicit
+    // user continuation instead of sending an invalid request.
+    if (contents.at(-1)?.role === 'model') {
       contents.push({
-        role: message.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: String(message.content ?? '') }],
+        role: 'user',
+        parts: [{
+          text: 'Continue with the current request. Call an appropriate available tool for a requested change, or answer briefly if no change is needed.',
+        }],
       });
     }
 

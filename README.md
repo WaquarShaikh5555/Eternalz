@@ -73,9 +73,10 @@ them the onboarding role when they join.
 **Messaging** — post an announcement or a formatted embed when it is
 explicitly requested.
 
-**Moderation** — timeout (mute), kick, ban, unban, and bulk delete up to 100
-recent messages in a channel. Timeout, kick, ban and bulk delete always
-require confirmation.
+**Moderation** — mute/timeout, kick, ban, unban, and bulk delete up to 100
+recent messages in a channel. Usernames, user ids and Discord `@member` mentions
+are accepted. A mute without a duration defaults to **5 minutes**. Mute, kick,
+ban and bulk delete always require confirmation.
 
 **Permission self-check** — before planning or executing, the bot compares the
 required permissions with the ones it actually has and tells you exactly what
@@ -99,7 +100,7 @@ what is and is not supported.
    │
    ├─ 1. Authorisation          owner / configured or granted admins, scoped per guild
    ├─ 2. Rate limit + cooldown  per user
-   ├─ 3. Snapshot               the real server state is read
+   ├─ 3. Snapshot + context     fresh state + this user's latest confirmed result
    ├─ 4. Inspection phase       the model may call read-only tools
    ├─ 5. Planning phase         the model may call mutating tools
    ├─ 6. Schema validation      every tool call is validated strictly
@@ -115,6 +116,12 @@ Two model calls are used for a typical request (inspection + planning). The
 server overview, tool schemas, read results and completion budget are bounded
 so the normal flow fits free-provider token limits; read tools are used only
 when the overview lacks a needed detail.
+
+For a separate follow-up such as **“rename it to lobby”**, the planner receives
+only the latest confirmed successful result (for up to 30 minutes) from the
+same administrator in the same server. It can therefore resolve “it” to the existing channel id instead
+of creating a duplicate. Pending, failed, other-user and other-server actions
+are not treated as completed context.
 
 ---
 
@@ -500,6 +507,7 @@ src/
     authorization.js          environment + per-guild grant authorization
     grants.js                 persistent guild-scoped administrator grants
     owner.js                  Discord application-owner verification
+    request-context.js        bounded confirmed-action follow-up context
     risk.js                   risk classification
     confirmation.js           pending plans, buttons, expiry
     executor.js               paced, retried, verified execution
@@ -520,7 +528,7 @@ uses Node's built-in `node:sqlite`.
 npm test
 ```
 
-163 tests covering:
+The test suite covers:
 
 * **authorisation** — owner, configured/granted admins, configured roles, ordinary
   members, the wrong guild, and the guarantee that *the AI provider is never
@@ -542,9 +550,10 @@ npm test
 * **storage** — SQLite and JSON drivers, round-trips and restarts;
 * **the provider wire format** — request bodies, tool-call parsing, 429 →
   quota error, 401 → no retry, 5xx → retry, invalid JSON, and the native
-  Gemini format (against a local HTTP server);
-* **the full request flow** — a plain-language request that really creates a
-  category and a channel through the mocked Discord API.
+  Gemini format and model-ending request regression (against a local HTTP server);
+* **the full request flow** — plain-language requests through the mocked
+  Discord API, including create-then-rename follow-ups and mention-based mute,
+  kick and ban operations that cannot execute before confirmation.
 
 ---
 

@@ -108,12 +108,18 @@ function withoutSchemaDescriptions(schema) {
   return result;
 }
 
-/** Gemini rejects JSON Schema keywords it does not know - strip them. */
+/** Gemini rejects unsupported JSON Schema keywords - strip them recursively. */
 function cleanSchemaForGemini(schema) {
+  if (Array.isArray(schema)) return schema.map(cleanSchemaForGemini);
   if (!schema || typeof schema !== 'object') return schema;
-  const clone = JSON.parse(JSON.stringify(schema));
-  delete clone.additionalProperties;
-  return clone;
+  const result = {};
+  for (const [key, value] of Object.entries(schema)) {
+    // `default` remains in the local validator so omitted optional arguments
+    // are normalised, but it is not accepted in Gemini declarations.
+    if (key === 'additionalProperties' || key === 'default') continue;
+    result[key] = cleanSchemaForGemini(value);
+  }
+  return result;
 }
 
 module.exports = {

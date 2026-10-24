@@ -415,6 +415,53 @@ test('a safe request is executed automatically and audited', async () => {
   await env.storage.close();
 });
 
+test('a separate rename-it follow-up reuses the created channel instead of creating a duplicate', async () => {
+  const env = await makeEnvironment();
+  const guild = makeGuild({ ownerId: 'owner-1' });
+  const provider = fakeProvider([
+    { text: null, toolCalls: [] },
+    { text: null, toolCalls: [{ id: '1', name: 'create_channel', arguments: { name: 'old-channel' } }] },
+    { text: null, toolCalls: [] },
+    // Simulate a model repeating the previous mistake. The application guard
+    // must still turn this lone create into the explicitly requested rename.
+    { text: null, toolCalls: [{ id: '2', name: 'create_channel', arguments: { name: 'new-channel' } }] },
+  ]);
+  const common = {
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    limiter: env.limiter,
+    cooldown: env.cooldown,
+    provider,
+  };
+
+  const created = await handleAdminRequest({
+    ...common,
+    interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: 'create a channel called old-channel' }),
+  });
+  assert.equal(created.kind, 'executed');
+  const original = guild.channels.cache.find((channel) => channel.name === 'old-channel');
+  assert.ok(original);
+  const originalId = original.id;
+  const countAfterCreate = guild.channels.cache.size;
+
+  const renamed = await handleAdminRequest({
+    ...common,
+    interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: 'rename it to new-channel' }),
+  });
+
+  assert.equal(renamed.kind, 'executed');
+  assert.equal(renamed.report.succeeded[0].tool, 'rename_channel');
+  assert.equal(guild.channels.cache.size, countAfterCreate, 'no duplicate channel may be created');
+  assert.equal(guild.channels.cache.get(originalId).name, 'new-channel');
+  const secondRequest = provider.calls[2].messages[1].content;
+  assert.match(secondRequest, /<recent_admin_context>/);
+  assert.ok(secondRequest.includes(originalId), 'the follow-up must receive the earlier channel id');
+  await env.storage.close();
+});
+
 test('a destructive request asks for confirmation instead of running', async () => {
   const env = await makeEnvironment();
   const guild = makeGuild({
@@ -450,6 +497,92 @@ test('a destructive request asks for confirmation instead of running', async () 
   assert.equal(stored.status, STATUS.PENDING);
   await env.storage.close();
 });
+
+const moderationScenarios = [
+  {
+    tool: 'timeout_member',
+    args: {},
+    verify(guild, targetId) {
+      const target = guild.members.cache.get(targetId);
+      assert.ok(target.communicationDisabledUntilTimestamp > Date.now());
+    },
+  },
+  {
+    tool: 'kick_member',
+    args: {},
+    verify(guild, targetId) {
+      assert.ok(guild.__kicked.some((member) => member.id === targetId));
+    },
+  },
+  {
+    tool: 'ban_member',
+    args: {},
+    verify(guild, targetId) {
+      assert.ok(guild.__banned.some((member) => member.id === targetId));
+    },
+  },
+];
+
+for (const scenario of moderationScenarios) {
+  test(`${scenario.tool} accepts a Discord mention and executes only after confirmation`, async () => {
+    const env = await makeEnvironment();
+    const targetId = '123456789012345678';
+    const guild = makeGuild({
+      ownerId: 'owner-1',
+      members: [{ id: targetId, username: 'spammer' }],
+    });
+    const provider = fakeProvider([
+      { text: null, toolCalls: [] },
+      {
+        text: null,
+        toolCalls: [{
+          id: '1',
+          name: scenario.tool,
+          arguments: { member: `<@${targetId}>`, ...scenario.args },
+        }],
+      },
+    ]);
+    const common = {
+      guild,
+      config: env.config,
+      storage: env.storage,
+      audit: env.audit,
+      logger: null,
+      limiter: env.limiter,
+      cooldown: env.cooldown,
+      provider,
+    };
+
+    const pending = await handleAdminRequest({
+      ...common,
+      interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: `moderate <@${targetId}>` }),
+    });
+    assert.equal(pending.kind, 'awaiting_confirmation');
+    assert.equal(pending.plan.risk, 'confirm');
+    assert.equal(guild.__banned.length, 0);
+    assert.equal(guild.__kicked.length, 0);
+    assert.equal(guild.members.cache.get(targetId).communicationDisabledUntilTimestamp, null);
+    if (scenario.tool === 'timeout_member') {
+      assert.equal(pending.plan.actions[0].args.minutes, 5, 'a mute without a duration defaults to five minutes');
+    }
+
+    const confirmation = fakeInteraction({ guild, userId: 'owner-1', prompt: '' });
+    confirmation.customId = `ai_admin:confirm:${pending.plan.id}`;
+    const executed = await handlePlanButton({
+      interaction: confirmation,
+      guild,
+      config: env.config,
+      storage: env.storage,
+      audit: env.audit,
+      logger: null,
+      client: null,
+    });
+
+    assert.equal(executed.kind, 'executed');
+    scenario.verify(guild, targetId);
+    await env.storage.close();
+  });
+}
 
 test('only the requester can confirm a pending plan', async () => {
   const env = await makeEnvironment();
