@@ -14,6 +14,7 @@ const {
   handleConversationModal,
 } = require('./src/admin/interactions');
 const { registerEvents } = require('./src/discord/events');
+const { shouldRegisterInTargetGuild } = require('./src/discord/command-scope');
 const { toError } = require('./src/core/errors');
 
 const config = getConfig();
@@ -74,9 +75,9 @@ loadCommands(commandsPath);
  * Register the slash commands.
  *
  * Ordinary commands keep their historical global registration. Commands that
- * are marked `guildOnly` (the AI administration ones) are registered directly
- * in the configured target guild instead, which makes them appear instantly
- * and keeps them out of unrelated servers.
+ * are marked `guildOnly` are registered directly in the configured target
+ * guild instead. In explicit multi-guild mode, `/ai` alone opts into global
+ * registration; application-level authorisation still gates every request.
  */
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
@@ -84,7 +85,7 @@ async function registerCommands() {
   const globalCommands = [];
   const guildCommands = [];
   for (const command of client.commands.values()) {
-    if (command.guildOnly && config.discordGuildId) guildCommands.push(command);
+    if (shouldRegisterInTargetGuild(command, config)) guildCommands.push(command);
     else globalCommands.push(command);
   }
 

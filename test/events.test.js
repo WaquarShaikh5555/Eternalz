@@ -93,6 +93,37 @@ test('a member joining another server is ignored', async () => {
   await store.close();
 });
 
+test('multi-guild mode runs welcome settings in another guild', async () => {
+  const store = tempStore();
+  await store.init();
+  const guild = makeGuild({
+    id: 'other-guild',
+    channels: [{ id: 'welcome-other', name: 'welcome' }],
+  });
+  const member = makeMember(guild, { id: 'u9', username: 'newbie' });
+  guild.members.cache.set(member.id, member);
+  await store.setSetting('other-guild', 'welcome', {
+    channelId: 'welcome-other',
+    message: 'Welcome {user} to {server}!',
+  });
+
+  const sent = [];
+  const channel = guild.channels.cache.get('welcome-other');
+  const originalSend = channel.send;
+  channel.send = async (payload) => {
+    sent.push(payload);
+    return originalSend(payload);
+  };
+
+  await handleGuildMemberAdd(
+    member,
+    runtimeFor(guild, store, { aiMultiGuild: true }),
+  );
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].content, /Welcome <@u9>/);
+  await store.close();
+});
+
 test('a missing welcome channel does not crash the handler', async () => {
   const store = tempStore();
   await store.init();

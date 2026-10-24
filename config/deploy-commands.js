@@ -9,9 +9,9 @@
  *   node config/deploy-commands.js --global   # register everything globally (can take up to an hour)
  *
  * Guild registration appears immediately, global registration can take up to
- * an hour to propagate. The admin commands (`/ai`, `/ai-status`, `/ai-audit`)
- * are always registered in the target guild so they are available at once and
- * stay out of unrelated servers.
+ * an hour to propagate. Admin commands normally stay in the target guild.
+ * With AI_MULTI_GUILD=true, `/ai` is registered globally instead; code-level
+ * authorization remains mandatory in every guild.
  */
 
 require('dotenv').config();
@@ -22,6 +22,7 @@ const { REST, Routes, Collection } = require('discord.js');
 
 const { getConfig, validate } = require('../src/config/env');
 const { createLogger } = require('../src/core/logger');
+const { shouldRegisterInTargetGuild } = require('../src/discord/command-scope');
 
 const config = getConfig();
 const logger = createLogger({ level: config.logLevel, prefix: 'deploy' });
@@ -69,7 +70,7 @@ async function main() {
   for (const command of commands.values()) {
     if (force === 'guild') {
       guildOnly.push(command);
-    } else if (command.guildOnly && config.discordGuildId) {
+    } else if (shouldRegisterInTargetGuild(command, config)) {
       guildOnly.push(command);
     } else {
       global.push(command);

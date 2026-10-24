@@ -12,6 +12,7 @@
 | `AI_MODEL` | You choose it yourself: `openai/gpt-oss-120b` (recommended) | same |
 | `AI_MAX_OUTPUT_TOKENS` | Optional; keep `512` for Groq's free tier | same |
 | `AI_ADMIN_USER_IDS` | Discord app → right-click your profile → **Copy User ID** | same |
+| `AI_MULTI_GUILD` | Optional; set `true` only for configured users across servers they own/administer | same |
 | `AI_AUDIT_CHANNEL_ID` | Discord app → right-click a private channel → **Copy Channel ID** | same |
 | `AI_ADMIN_ENABLED` | You set it: `true` or `false` | same |
 | `AI_WRITE_ENABLED` | You set it: `true` or `false` | same |
@@ -54,7 +55,7 @@ needed by the older `/aichat` and `/search` commands. The AI administrator does
 This is *not* the token and *not* the public key - it is the plain number
 labelled "Application ID".
 
-## 4. `DISCORD_GUILD_ID` - which server the AI may administer
+## 4. `DISCORD_GUILD_ID` - the primary AI administration server
 
 1. In Discord, right-click your **server name / icon** in the left sidebar.
 2. Click **Copy Server ID**.
@@ -124,8 +125,29 @@ For several people, separate them with commas and no spaces:
 AI_ADMIN_USER_IDS=111111111111111111,222222222222222222
 ```
 
-**The server owner never needs to be listed** - they are always allowed.
-Adding yourself is only needed if you are not the owner.
+**The server owner never needs to be listed** - they are always allowed in the
+primary server. Adding yourself is only needed if you are not the owner, or if
+you want to use multi-guild mode.
+
+### Optional: use `/ai` in other servers you administer
+
+Keep `DISCORD_GUILD_ID` pointed at the primary server and set:
+
+```env
+AI_MULTI_GUILD=true
+AI_ADMIN_USER_IDS=your_numeric_user_id
+```
+
+Outside the primary server, only those explicitly configured user ids are
+eligible, and each person must also own the current server or have
+**Administrator** / **Manage Server** there. Other administrators cannot use
+the bot merely because they have a Discord admin role. Primary-server role IDs
+never authorize access in another server.
+
+Run `npm run register:global` after enabling this (or restart with automatic
+registration enabled). Global command propagation can take up to an hour. The
+bot must also be invited to each server with the permissions required for the
+changes you request.
 
 ## 7. `AI_AUDIT_CHANNEL_ID` - optional private log channel
 

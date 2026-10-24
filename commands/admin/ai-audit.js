@@ -28,7 +28,7 @@ module.exports = {
   async execute(interaction) {
     const guild = interaction.guild;
 
-    if (!isGuildAdmin(runtime.config, guild, interaction.user.id)) {
+    if (!isGuildAdmin(runtime.config, guild, interaction.user.id, interaction.member)) {
       await interaction.reply({
         content: '🔒 Only the server owner and configured administrators can read the audit log.',
         ephemeral: true,

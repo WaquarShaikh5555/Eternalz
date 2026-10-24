@@ -16,7 +16,7 @@ const path = require('node:path');
 const { handleAdminRequest, handlePlanButton } = require('../src/admin/service');
 const { JsonStore } = require('../src/storage/json-driver');
 const { AuditLogger } = require('../src/audit/audit');
-const { makeGuild } = require('./helpers/mock-discord');
+const { makeGuild, makePermissions } = require('./helpers/mock-discord');
 const { Cooldown, RateLimiter } = require('../src/core/rate-limiter');
 const { STATUS } = require('../src/admin/confirmation');
 
@@ -146,6 +146,120 @@ test('a request for the wrong guild is refused', async () => {
     /restricted to the configured server/i,
   );
   assert.equal(provider.calls.length, 0);
+  await env.storage.close();
+});
+
+test('a configured administrator can execute a safe plan in another guild in multi-guild mode', async () => {
+  const env = await makeEnvironment();
+  env.config.aiMultiGuild = true;
+  env.config.aiAdminUserIds = ['admin-1'];
+  const guild = makeGuild({
+    id: 'other-guild',
+    ownerId: 'someone-else',
+    members: [{ id: 'admin-1', username: 'admin', permissions: ['Administrator'] }],
+  });
+  const provider = fakeProvider([
+    { text: 'The server is ready.', toolCalls: [] },
+    {
+      text: null,
+      toolCalls: [{ id: '1', name: 'create_category', arguments: { name: 'Support' } }],
+    },
+  ]);
+
+  const result = await handleAdminRequest({
+    interaction: fakeInteraction({ guild, userId: 'admin-1', prompt: 'create a Support category' }),
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    limiter: env.limiter,
+    cooldown: env.cooldown,
+    provider,
+  });
+
+  assert.equal(result.kind, 'executed');
+  assert.equal(result.report.failed.length, 0);
+  assert.ok(guild.channels.cache.find((channel) => channel.name === 'Support'));
+  assert.ok(provider.calls.length >= 2);
+  const auditEntries = await env.storage.listAudit('other-guild', 10);
+  assert.ok(auditEntries.some((entry) => entry.event === 'executed'));
+  await env.storage.close();
+});
+
+test('an unconfigured server administrator cannot use multi-guild AI access', async () => {
+  const env = await makeEnvironment();
+  env.config.aiMultiGuild = true;
+  env.config.aiAdminUserIds = ['admin-1'];
+  const guild = makeGuild({
+    id: 'other-guild',
+    ownerId: 'someone-else',
+    members: [{ id: 'other-admin', permissions: ['Administrator'] }],
+  });
+  const provider = fakeProvider([{ text: 'should not be called', toolCalls: [] }]);
+
+  await assert.rejects(
+    () => handleAdminRequest({
+      interaction: fakeInteraction({ guild, userId: 'other-admin', prompt: 'create a channel' }),
+      guild,
+      config: env.config,
+      storage: env.storage,
+      audit: env.audit,
+      logger: null,
+      limiter: env.limiter,
+      cooldown: env.cooldown,
+      provider,
+    }),
+    /configured AI administrators/,
+  );
+  assert.equal(provider.calls.length, 0);
+  await env.storage.close();
+});
+
+test('multi-guild confirmation rejects an administrator whose access was revoked', async () => {
+  const env = await makeEnvironment();
+  env.config.aiMultiGuild = true;
+  env.config.aiAdminUserIds = ['admin-1'];
+  const guild = makeGuild({
+    id: 'other-guild',
+    ownerId: 'someone-else',
+    channels: [{ id: 'c1', name: 'spam' }],
+    members: [{ id: 'admin-1', permissions: ['Administrator'] }],
+  });
+  const provider = fakeProvider([
+    { text: null, toolCalls: [] },
+    { text: null, toolCalls: [{ id: '1', name: 'delete_channel', arguments: { channel: 'spam' } }] },
+  ]);
+
+  const pending = await handleAdminRequest({
+    interaction: fakeInteraction({ guild, userId: 'admin-1', prompt: 'delete spam' }),
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    limiter: env.limiter,
+    cooldown: env.cooldown,
+    provider,
+  });
+  assert.equal(pending.kind, 'awaiting_confirmation');
+
+  guild.members.cache.get('admin-1').permissions = makePermissions([]);
+  const interaction = fakeInteraction({ guild, userId: 'admin-1', prompt: '' });
+  interaction.customId = `ai_admin:confirm:${pending.plan.id}`;
+  const result = await handlePlanButton({
+    interaction,
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    client: null,
+  });
+
+  assert.equal(result.kind, 'unauthorised');
+  assert.ok(guild.channels.cache.has('c1'));
+  assert.equal((await env.storage.getPlan(pending.plan.id)).status, STATUS.CANCELLED);
   await env.storage.close();
 });
 

@@ -81,6 +81,7 @@ class AuditLogger {
       if (!channel || !channel.isTextBased?.() || channel.isDMBased?.()) return;
       const lines = [
         `**AI admin event:** \`${row.event}\``,
+        `**Server ID:** \`${row.guildId}\``,
         `**Requester:** <@${row.requesterId || 'unknown'}>`,
         `**Time:** <t:${Math.floor(row.createdAt / 1000)}:R>`,
       ];
