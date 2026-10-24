@@ -2,8 +2,8 @@
 
 /**
  * Decide whether a command belongs in the primary guild's registration set.
- * `/ai` opts into global registration only when multi-guild mode is enabled;
- * status and audit remain primary-guild commands. Authorisation is still
+ * `/ai` and `/add-admin` opt into global registration only in multi-guild
+ * mode; status and audit remain primary-guild commands. Authorisation is still
  * enforced in application code regardless of where a command is registered.
  */
 function shouldRegisterInTargetGuild(command, config) {

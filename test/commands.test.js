@@ -43,16 +43,17 @@ test('the command names are unique', () => {
 
 test('the AI administration commands are scoped to the target guild', () => {
   const commands = loadCommands(COMMANDS_DIR);
-  for (const name of ['ai', 'ai-status', 'ai-audit']) {
+  for (const name of ['ai', 'ai-status', 'ai-audit', 'add-admin']) {
     const command = commands.get(name);
     assert.ok(command, `/${name} should exist`);
     assert.equal(command.guildOnly, true, `/${name} must be guild scoped`);
   }
 });
 
-test('only /ai opts into global registration for multi-guild mode', () => {
+test('only /ai and /add-admin opt into global registration for multi-guild mode', () => {
   const commands = loadCommands(COMMANDS_DIR);
   assert.equal(commands.get('ai').multiGuild, true);
+  assert.equal(commands.get('add-admin').multiGuild, true);
   assert.notEqual(commands.get('ai-status').multiGuild, true);
   assert.notEqual(commands.get('ai-audit').multiGuild, true);
 });
@@ -77,6 +78,16 @@ test('/ai takes a prompt and an optional dry-run flag', () => {
   assert.ok(dryRun);
   assert.equal(dryRun.type, 5); // BOOLEAN
   assert.equal(dryRun.required, false);
+});
+
+test('/add-admin requires one user and is guild-only', () => {
+  const commands = loadCommands(COMMANDS_DIR);
+  const json = commands.get('add-admin').data.toJSON();
+  const user = json.options.find((option) => option.name === 'user');
+  assert.ok(user);
+  assert.equal(user.type, 6); // USER
+  assert.equal(user.required, true);
+  assert.deepEqual(json.contexts, [0]);
 });
 
 test('/ai is only usable inside a server', () => {

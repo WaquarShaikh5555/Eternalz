@@ -7,7 +7,7 @@
 const { SlashCommandBuilder, EmbedBuilder, InteractionContextType } = require('discord.js');
 
 const { runtime } = require('../../src/runtime');
-const { isGuildAdmin } = require('../../src/admin/authorization');
+const { isGuildAdminWithGrants } = require('../../src/admin/authorization');
 
 module.exports = {
   guildOnly: true,
@@ -28,7 +28,13 @@ module.exports = {
   async execute(interaction) {
     const guild = interaction.guild;
 
-    if (!isGuildAdmin(runtime.config, guild, interaction.user.id, interaction.member)) {
+    if (!(await isGuildAdminWithGrants(
+      runtime.config,
+      runtime.storage,
+      guild,
+      interaction.user.id,
+      interaction.member,
+    ))) {
       await interaction.reply({
         content: '🔒 Only the server owner and configured administrators can read the audit log.',
         ephemeral: true,

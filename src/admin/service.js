@@ -17,7 +17,11 @@ const { EmbedBuilder } = require('discord.js');
 const { createPlan } = require('../ai/planner');
 const { buildGuildSnapshot } = require('../discord/snapshot');
 const { assessPlan, RISK, riskLabel, riskColour } = require('./risk');
-const { assertGuildAdmin, describeRefusal, isGuildAdmin } = require('./authorization');
+const {
+  assertGuildAdminWithGrants,
+  describeRefusal,
+  isGuildAdminWithGrants,
+} = require('./authorization');
 const { executePlan, planPermissionGaps } = require('./executor');
 const {
   createPendingPlan,
@@ -64,7 +68,7 @@ async function handleAdminRequest(options) {
 
   // --- 1. Authorisation BEFORE the AI provider is contacted ---------------
   try {
-    assertGuildAdmin(config, guild, requesterId, actorMember);
+    await assertGuildAdminWithGrants(config, storage, guild, requesterId, actorMember);
   } catch (err) {
     await audit?.log({
       guildId,
@@ -326,7 +330,7 @@ async function handlePlanButton(options) {
   }
 
   // --- Re-authorise before executing ---------------------------------------
-  if (!isGuildAdmin(config, guild, requesterId, actorMember)) {
+  if (!(await isGuildAdminWithGrants(config, storage, guild, requesterId, actorMember))) {
     await storage.updatePlan(plan.id, { status: STATUS.CANCELLED });
     await interaction.reply({
       content: 'Your administrator access changed, so this plan was cancelled.',
@@ -433,8 +437,8 @@ async function executeActions({ actions, ctx, config, logger, guild, requesterId
     ctx,
     config,
     logger,
-    authorize: () => {
-      assertGuildAdmin(config, guild, requesterId, ctx.actorMember);
+    authorize: async () => {
+      await assertGuildAdminWithGrants(config, ctx.storage, guild, requesterId, ctx.actorMember);
     },
   });
 }

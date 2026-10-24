@@ -155,12 +155,12 @@ function validate(config = getConfig()) {
   }
   if (!config.aiAdminUserIds.length) {
     warnings.push(
-      'AI_ADMIN_USER_IDS is empty - only the guild owner will be able to use /ai.',
+      'AI_ADMIN_USER_IDS is empty - the static allowlist is disabled; the primary owner and per-guild /add-admin grants can still use /ai.',
     );
   }
   if (config.aiMultiGuild && !config.aiAdminUserIds.length) {
     warnings.push(
-      'AI_MULTI_GUILD=true needs AI_ADMIN_USER_IDS; no one is authorised outside the primary guild without an explicit user id.',
+      'AI_MULTI_GUILD=true has no static admin ids; use /add-admin in each other guild or configure AI_ADMIN_USER_IDS.',
     );
   }
   if (config.aiAdminEnabled) {
