@@ -10,8 +10,8 @@
  *
  * Guild registration appears immediately, global registration can take up to
  * an hour to propagate. Admin commands normally stay in the target guild.
- * With AI_MULTI_GUILD=true, `/ai` is registered globally instead; code-level
- * authorization remains mandatory in every guild.
+ * With AI_MULTI_GUILD=true, `/ai` and `/add-admin` are registered globally
+ * instead; code-level authorization remains mandatory in every guild.
  */
 
 require('dotenv').config();
@@ -90,7 +90,7 @@ async function main() {
     if (guildOnly.length) {
       if (!config.discordGuildId) {
         logger.error(
-          'DISCORD_GUILD_ID is not set - the guild-scoped commands (/ai, /ai-status, /ai-audit) were not registered.',
+          'DISCORD_GUILD_ID is not set - the guild-scoped commands (/ai, /ai-status, /ai-audit, /add-admin) were not registered.',
         );
         if (force === 'guild') process.exitCode = 1;
       } else {

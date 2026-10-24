@@ -96,8 +96,10 @@ webhooks, integrations, widgets, audit-log reading, vanity URLs.
 
 ## Safety limits that are never lifted
 
-* One guild only: `DISCORD_GUILD_ID`.
-* Only the owner and `AI_ADMIN_USER_IDS` (plus optional `AI_ADMIN_ROLE_IDS`).
+* One target guild by default; other guilds require explicit `AI_MULTI_GUILD=true`.
+* Access requires the owner, static `AI_ADMIN_USER_IDS` / `AI_ADMIN_ROLE_IDS`
+  rules, or a current-guild grant issued by the application owner with
+  `/add-admin`. Grants never carry over or permit adding more administrators.
 * No arbitrary code execution, no invented API operations.
 * A role the bot does not outrank can never be touched, and neither can a
   member with a role at or above the bot's highest role.

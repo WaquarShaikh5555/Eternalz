@@ -11,8 +11,8 @@
 | `AI_PROVIDER` | You choose it yourself: `groq` (recommended), `openrouter`, `gemini`, `openai` | same |
 | `AI_MODEL` | You choose it yourself: `openai/gpt-oss-120b` (recommended) | same |
 | `AI_MAX_OUTPUT_TOKENS` | Optional; keep `512` for Groq's free tier | same |
-| `AI_ADMIN_USER_IDS` | Discord app → right-click your profile → **Copy User ID** | same |
-| `AI_MULTI_GUILD` | Optional; set `true` only for configured users across servers they own/administer | same |
+| `AI_ADMIN_USER_IDS` | Optional static allowlist; alternatively use `/add-admin user:@member` | same |
+| `AI_MULTI_GUILD` | Optional; set `true` to permit configured/granted access in other servers | same |
 | `AI_AUDIT_CHANNEL_ID` | Discord app → right-click a private channel → **Copy Channel ID** | same |
 | `AI_ADMIN_ENABLED` | You set it: `true` or `false` | same |
 | `AI_WRITE_ENABLED` | You set it: `true` or `false` | same |
@@ -112,22 +112,29 @@ AI_MODEL=the-model-id
 AI_API_KEY=...
 ```
 
-## 6. `AI_ADMIN_USER_IDS` - who may use `/ai`
+## 6. `AI_ADMIN_USER_IDS` - optional static `/ai` allowlist
 
-1. In Discord, right-click **your own avatar or username** (in the member list
-   or on a message you sent).
-2. Click **Copy User ID**.
-3. Paste the number into `AI_ADMIN_USER_IDS`.
+You do not need to add every person here. The Discord application owner can
+instead grant access in the current server with:
 
-For several people, separate them with commas and no spaces:
-
+```text
+/add-admin user:@member
 ```
+
+Only the application owner can use that command, and only where they also own
+the server or have **Administrator** / **Manage Server**. Grants are persisted
+per server and never let the recipient add other administrators.
+
+For a static environment-based allowlist, right-click a user's avatar, choose
+**Copy User ID**, and paste the numeric IDs separated by commas:
+
+```env
 AI_ADMIN_USER_IDS=111111111111111111,222222222222222222
 ```
 
-**The server owner never needs to be listed** - they are always allowed in the
-primary server. Adding yourself is only needed if you are not the owner, or if
-you want to use multi-guild mode.
+The primary-server owner never needs to be listed. A static ID or an
+`/add-admin` grant is required for other users; a Discord role by itself is not
+sufficient.
 
 ### Optional: use `/ai` in other servers you administer
 
@@ -135,14 +142,13 @@ Keep `DISCORD_GUILD_ID` pointed at the primary server and set:
 
 ```env
 AI_MULTI_GUILD=true
-AI_ADMIN_USER_IDS=your_numeric_user_id
 ```
 
-Outside the primary server, only those explicitly configured user ids are
-eligible, and each person must also own the current server or have
-**Administrator** / **Manage Server** there. Other administrators cannot use
-the bot merely because they have a Discord admin role. Primary-server role IDs
-never authorize access in another server.
+`AI_ADMIN_USER_IDS` is optional if you use `/add-admin`. Outside the primary
+server, statically configured users must also own the current server or have
+**Administrator** / **Manage Server**. A user added through `/add-admin` instead
+receives exactly one persisted guild grant. Neither kind of access carries over
+to another server, and primary-server role IDs are never reused.
 
 Run `npm run register:global` after enabling this (or restart with automatic
 registration enabled). Global command propagation can take up to an hour. The

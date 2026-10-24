@@ -19,6 +19,7 @@ const { AuditLogger } = require('../src/audit/audit');
 const { makeGuild, makePermissions } = require('./helpers/mock-discord');
 const { Cooldown, RateLimiter } = require('../src/core/rate-limiter');
 const { STATUS } = require('../src/admin/confirmation');
+const { grantGuildAdmin, grantKey } = require('../src/admin/grants');
 
 function fakeProvider(responses) {
   let index = 0;
@@ -260,6 +261,99 @@ test('multi-guild confirmation rejects an administrator whose access was revoked
   assert.equal(result.kind, 'unauthorised');
   assert.ok(guild.channels.cache.has('c1'));
   assert.equal((await env.storage.getPlan(pending.plan.id)).status, STATUS.CANCELLED);
+  await env.storage.close();
+});
+
+test('a persisted add-admin grant works only in the guild where it was issued', async () => {
+  const env = await makeEnvironment();
+  env.config.aiMultiGuild = true;
+  const guild = makeGuild({ id: 'granted-guild', ownerId: 'someone-else' });
+  await grantGuildAdmin(env.storage, {
+    guildId: guild.id,
+    userId: 'member-1',
+    addedBy: 'owner-user',
+  });
+  const provider = fakeProvider([
+    { text: null, toolCalls: [] },
+    { text: null, toolCalls: [{ id: '1', name: 'create_category', arguments: { name: 'Support' } }] },
+  ]);
+
+  const result = await handleAdminRequest({
+    interaction: fakeInteraction({ guild, userId: 'member-1', prompt: 'create Support' }),
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    limiter: env.limiter,
+    cooldown: env.cooldown,
+    provider,
+  });
+  assert.equal(result.kind, 'executed');
+  assert.equal(result.report.failed.length, 0);
+
+  const callsBeforeOtherGuild = provider.calls.length;
+  const otherGuild = makeGuild({ id: 'not-granted-guild', ownerId: 'someone-else' });
+  await assert.rejects(
+    () => handleAdminRequest({
+      interaction: fakeInteraction({ guild: otherGuild, userId: 'member-1', prompt: 'create Support' }),
+      guild: otherGuild,
+      config: env.config,
+      storage: env.storage,
+      audit: env.audit,
+      logger: null,
+      limiter: env.limiter,
+      cooldown: env.cooldown,
+      provider,
+    }),
+    /configured AI administrators/,
+  );
+  assert.equal(provider.calls.length, callsBeforeOtherGuild);
+  await env.storage.close();
+});
+
+test('a granted administrator still needs confirmation and is rechecked after revocation', async () => {
+  const env = await makeEnvironment();
+  const guild = makeGuild({ channels: [{ id: 'general-channel', name: 'general' }] });
+  await grantGuildAdmin(env.storage, {
+    guildId: guild.id,
+    userId: 'member-1',
+    addedBy: 'owner-user',
+  });
+  const provider = fakeProvider([
+    { text: null, toolCalls: [] },
+    { text: null, toolCalls: [{ id: '1', name: 'delete_channel', arguments: { channel: 'general' } }] },
+  ]);
+  const interaction = fakeInteraction({ guild, userId: 'member-1', prompt: 'delete general' });
+
+  const result = await handleAdminRequest({
+    interaction,
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    limiter: env.limiter,
+    cooldown: env.cooldown,
+    provider,
+  });
+  assert.equal(result.kind, 'awaiting_confirmation');
+  assert.ok(guild.channels.cache.find((channel) => channel.name === 'general'));
+
+  // Removing the stored grant must affect an already-created confirmation.
+  await env.storage.setSetting(guild.id, grantKey('member-1'), null);
+  interaction.customId = `ai_admin:confirm:${result.plan.id}`;
+  const confirmation = await handlePlanButton({
+    interaction,
+    guild,
+    config: env.config,
+    storage: env.storage,
+    audit: env.audit,
+    logger: null,
+    client: null,
+  });
+  assert.equal(confirmation.kind, 'unauthorised');
+  assert.ok(guild.channels.cache.find((channel) => channel.name === 'general'));
   await env.storage.close();
 });
 

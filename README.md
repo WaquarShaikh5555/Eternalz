@@ -51,6 +51,7 @@ risky, and then performs the change through the official Discord API.
 | `/ai prompt:<text> [dry_run]` | Manage the server with a plain-language request |
 | `/ai-status` | Show whether AI administration is configured (no secrets) |
 | `/ai-audit` | Show the recent AI administration activity log |
+| `/add-admin user:<member>` | Application owner grants `/ai` access in the current server only |
 
 ### Supported operations
 
@@ -96,7 +97,7 @@ what is and is not supported.
 ```
 /ai prompt "create a Support category with a tickets channel"
    │
-   ├─ 1. Authorisation          owner / configured admins, single or opt-in multi-guild
+   ├─ 1. Authorisation          owner / configured or granted admins, scoped per guild
    ├─ 2. Rate limit + cooldown  per user
    ├─ 3. Snapshot               the real server state is read
    ├─ 4. Inspection phase       the model may call read-only tools
@@ -132,14 +133,18 @@ never from what the model says about the action.
 
 ## Safety model
 
-* **Owner-only by default.** Only the server owner and the user ids in
-  `AI_ADMIN_USER_IDS` may use `/ai`. Role checks alone are never enough.
+* **Owner-controlled access.** The server owner, configured user ids, and
+  members explicitly granted by the Discord application owner through
+  `/add-admin` may use `/ai`. A grant is stored for one guild only and never
+  grants the ability to add more administrators.
+* **Owner-only delegation.** `/add-admin` verifies the Discord application
+  owner and requires that person to own or administer the current guild.
 * **Checked twice.** Authorisation is verified in code *before* the AI provider
   is contacted and again immediately before every single action is executed.
 * **One target guild by default.** The bot refuses to act in any server other
-  than `DISCORD_GUILD_ID`. With explicit `AI_MULTI_GUILD=true`, only configured
-  user ids can also use `/ai` in other guilds where they own the server or have
-  Administrator / Manage Server; primary-guild role IDs never carry over.
+  than `DISCORD_GUILD_ID`. With explicit `AI_MULTI_GUILD=true`, configured
+  users and holders of a current-guild `/add-admin` grant can use `/ai` in
+  other guilds. Primary-guild role IDs and grants never carry over.
 * **Fixed tool allowlist.** The model can only request the tools in
   `src/discord/tools/`. Unknown tool names are rejected.
 * **Strict schemas.** Every argument is validated (types, enums, ranges,
@@ -203,7 +208,7 @@ environment-variable panel. **Never commit a filled-in `.env`.**
 | `AI_API_KEY` | The key for the chosen provider |
 | `AI_MODEL` | Model id. A sensible default is chosen per provider |
 | `AI_BASE_URL` | Optional base URL override |
-| `AI_ADMIN_USER_IDS` | Comma separated user ids allowed to use `/ai` (owner always allowed) |
+| `AI_ADMIN_USER_IDS` | Optional static user ids allowed to use `/ai`; `/add-admin` is the per-guild alternative |
 
 ### Optional
 
@@ -313,8 +318,9 @@ permissions directly in **Server Settings → Roles → Eternalz**.
 
 * **Server id** — Developer Mode (User Settings → Advanced) → right-click the
   server → *Copy Server ID* → `DISCORD_GUILD_ID`.
-* **Your user id** — right-click yourself → *Copy User ID* → put it in
-  `AI_ADMIN_USER_IDS` if you are not the server owner.
+* **Your user id** — optional static allowlist: right-click yourself → *Copy
+  User ID* → `AI_ADMIN_USER_IDS`. Alternatively, use `/add-admin` after the
+  commands are registered.
 
 ### 4. Register the slash commands
 
@@ -322,8 +328,9 @@ permissions directly in **Server Settings → Roles → Eternalz**.
 npm run register:guild
 ```
 
-This registers `/ai`, `/ai-status` and `/ai-audit` directly in the target
-guild (they appear immediately) and registers the ordinary commands globally.
+This registers `/ai`, `/ai-status`, `/ai-audit` and `/add-admin` directly in
+the target guild (they appear immediately) and registers ordinary commands
+globally.
 Use `npm run register:global` to register everything globally instead, and
 `npm run register` to use the `COMMAND_SCOPE` setting.
 
@@ -332,28 +339,38 @@ only needed once (or after adding a command).
 
 ### Using `/ai` in several servers
 
-Keep `DISCORD_GUILD_ID` set to your primary server, then explicitly enable
-multi-guild access and list your own Discord user id:
+Keep `DISCORD_GUILD_ID` set to your primary server and explicitly enable
+multi-guild access:
 
 ```env
 AI_MULTI_GUILD=true
-AI_ADMIN_USER_IDS=<your Discord user id>
 ```
 
-In every other server, the configured user must be the server owner or have
-**Administrator** or **Manage Server**. Merely being an administrator is not
-enough: the user id must also be in `AI_ADMIN_USER_IDS`. This prevents every
-admin of every server from using your AI quota. `AI_ADMIN_ROLE_IDS` applies only
-to the primary server.
+`AI_ADMIN_USER_IDS` remains an optional static allowlist. A configured user
+must own the other server or have **Administrator** / **Manage Server** there.
 
-Register `/ai` globally after changing the setting:
+To delegate access without editing environment variables, use this in the
+server where the person should receive access:
+
+```text
+/add-admin user:@member
+```
+
+Only the Discord application owner can use `/add-admin`, and that owner must
+also own the current server or have **Administrator** / **Manage Server** there.
+The target must be a member of that server. The grant persists in SQLite/JSON,
+applies only to that server, and does not permit the recipient to use
+`/add-admin`. The application owner can also add themselves instead of putting
+their own ID in `AI_ADMIN_USER_IDS`.
+
+Register `/ai` and `/add-admin` globally after changing the setting:
 
 ```bash
 npm run register:global
 ```
 
 Alternatively, restart with `REGISTER_COMMANDS_ON_START=true`; automatic
-startup registration also moves `/ai` to global registration. Discord global
+startup registration also moves `/ai` and `/add-admin` to global registration. Discord global
 commands can take up to an hour to appear. Invite the bot to each server and
 grant the bot the permissions needed for the requested changes. Use
 `AI_MULTI_GUILD=false` and re-register to restore single-server access.
@@ -461,6 +478,7 @@ commands/
   admin/ai.js                 /ai
   admin/ai-status.js          /ai-status
   admin/ai-audit.js           /ai-audit
+  admin/add-admin.js          /add-admin
   fun/, utility/              the existing commands
 src/
   config/env.js               environment parsing, validation, redaction
@@ -479,7 +497,9 @@ src/
     resolve.js                name/id resolution
     tools/                    the tool allowlist
   admin/
-    authorization.js          who may use the AI administration
+    authorization.js          environment + per-guild grant authorization
+    grants.js                 persistent guild-scoped administrator grants
+    owner.js                  Discord application-owner verification
     risk.js                   risk classification
     confirmation.js           pending plans, buttons, expiry
     executor.js               paced, retried, verified execution
@@ -502,7 +522,7 @@ npm test
 
 163 tests covering:
 
-* **authorisation** — owner, configured admins, configured roles, ordinary
+* **authorisation** — owner, configured/granted admins, configured roles, ordinary
   members, the wrong guild, and the guarantee that *the AI provider is never
   contacted* for an unauthorised request;
 * **risk classification** — every destructive and privileged operation, plus

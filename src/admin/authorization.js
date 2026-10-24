@@ -15,6 +15,7 @@
 
 const { PermissionFlagsBits, PermissionsBitField } = require('discord.js');
 const { AuthorizationError } = require('../core/errors');
+const { hasGuildAdminGrant } = require('./grants');
 
 function configuredUsers(config) {
   return Array.isArray(config.aiAdminUserIds) ? config.aiAdminUserIds : [];
@@ -104,7 +105,7 @@ function assertGuildAdmin(config, guild, userId, suppliedMember = null) {
   if (!isGuildAdmin(config, guild, userId, suppliedMember)) {
     if (guild.id !== config.discordGuildId) {
       throw new AuthorizationError(
-        'In other servers, /ai is only available to configured AI administrators who are the server owner or have Administrator or Manage Server.',
+        'In other servers, /ai requires a current-server /add-admin grant. Otherwise, configured AI administrators must own the server or have Administrator or Manage Server.',
       );
     }
     throw new AuthorizationError(
@@ -137,9 +138,36 @@ function describeRefusal(config, guild, userId, suppliedMember = null) {
   return 'not authorised';
 }
 
+/**
+ * Storage-aware variants used by the live command pipeline. Environment and
+ * role-based rules stay synchronous for existing consumers; a persisted grant
+ * is additive and can never widen access beyond the enabled guild scope.
+ */
+async function isGuildAdminWithGrants(config, storage, guild, userId, suppliedMember = null) {
+  if (isGuildAdmin(config, guild, userId, suppliedMember)) return true;
+  if (!config.aiAdminEnabled || !config.discordGuildId || !guild || !userId) return false;
+  if (guild.id !== config.discordGuildId && !config.aiMultiGuild) return false;
+  return hasGuildAdminGrant(storage, guild.id, userId);
+}
+
+async function assertGuildAdminWithGrants(config, storage, guild, userId, suppliedMember = null) {
+  try {
+    assertGuildAdmin(config, guild, userId, suppliedMember);
+    return true;
+  } catch (err) {
+    if (!(err instanceof AuthorizationError)) throw err;
+    if (!config.aiAdminEnabled || !config.discordGuildId) throw err;
+    if (guild?.id !== config.discordGuildId && !config.aiMultiGuild) throw err;
+    if (guild && await hasGuildAdminGrant(storage, guild.id, userId)) return true;
+    throw err;
+  }
+}
+
 module.exports = {
   isGuildAdmin,
   assertGuildAdmin,
+  isGuildAdminWithGrants,
+  assertGuildAdminWithGrants,
   describeRefusal,
   hasGuildManagementPermission,
 };
