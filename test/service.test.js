@@ -439,7 +439,7 @@ test('a separate rename-it follow-up reuses the created channel instead of creat
 
   const created = await handleAdminRequest({
     ...common,
-    interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: 'create a channel called old-channel' }),
+    interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: 'set up a channel called old-channel' }),
   });
   assert.equal(created.kind, 'executed');
   const original = guild.channels.cache.find((channel) => channel.name === 'old-channel');
@@ -449,7 +449,7 @@ test('a separate rename-it follow-up reuses the created channel instead of creat
 
   const renamed = await handleAdminRequest({
     ...common,
-    interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: 'rename it to new-channel' }),
+    interaction: fakeInteraction({ guild, userId: 'owner-1', prompt: 'now rename it to new-channel' }),
   });
 
   assert.equal(renamed.kind, 'executed');

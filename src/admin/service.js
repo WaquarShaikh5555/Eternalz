@@ -173,6 +173,7 @@ async function handleAdminRequest(options) {
       reasons: assessment.reasons,
       rejected: plan.rejected,
       notes: plan.notes,
+      planningSource: plan.source || 'model',
     },
   });
 

@@ -68,7 +68,9 @@ function makeChannel(guild, options = {}) {
       },
     },
     permissionsFor: (member) =>
-      member?.permissions || makePermissions(['ViewChannel', 'SendMessages', 'EmbedLinks']),
+      options.permissions
+        ? makePermissions(options.permissions)
+        : member?.permissions || makePermissions(['ViewChannel', 'SendMessages', 'EmbedLinks']),
     isTextBased: () => channel.type === ChannelType.GuildText ||
       channel.type === ChannelType.GuildAnnouncement ||
       channel.type === ChannelType.GuildForum,
@@ -88,6 +90,21 @@ function makeChannel(guild, options = {}) {
     setParent: async (parentId) => {
       channel.parentId = parentId;
       return channel;
+    },
+    setNSFW: async (nsfw) => {
+      channel.nsfw = Boolean(nsfw);
+      return channel;
+    },
+    createInvite: async (inviteOptions) => {
+      guild.__invited = guild.__invited || [];
+      guild.__invited.push(inviteOptions);
+      return {
+        code: 'test-invite',
+        url: 'https://discord.gg/test-invite',
+        maxAge: inviteOptions.maxAge,
+        maxUses: inviteOptions.maxUses,
+        temporary: inviteOptions.temporary,
+      };
     },
     delete: async () => {
       guild.channels.cache.delete(channel.id);
@@ -158,6 +175,12 @@ function makeMember(guild, options = {}) {
     },
     displayName: options.displayName || options.username || `user${id}`,
     nickname: options.nickname || null,
+    voice: {
+      channelId: options.voiceChannelId || null,
+      setChannel: async (channelId) => { member.voice.channelId = channelId; },
+      disconnect: async () => { member.voice.channelId = null; },
+      fetch: async () => member.voice,
+    },
     permissions: makePermissions(options.permissions || []),
     roles: {
       cache: roleCache,
@@ -179,8 +202,12 @@ function makeMember(guild, options = {}) {
     },
     moderatable: true,
     communicationDisabledUntilTimestamp: null,
+    setNickname: async (nickname) => {
+      member.nickname = nickname;
+      return member;
+    },
     timeout: async (ms) => {
-      member.communicationDisabledUntilTimestamp = Date.now() + ms;
+      member.communicationDisabledUntilTimestamp = ms === null ? null : Date.now() + ms;
       return member;
     },
     ban: async () => {
@@ -213,6 +240,11 @@ function makeGuild(options = {}) {
     premiumTier: 0,
     features: new Set(['COMMUNITY']),
     createdAt: new Date('2024-01-01T00:00:00Z'),
+    setName: async (name) => {
+      guild.name = name;
+      return guild;
+    },
+    fetch: async () => guild,
     channels: {
       cache: channels,
       create: async (options = {}) => {
@@ -257,6 +289,7 @@ function makeGuild(options = {}) {
     __deleted: [],
     __banned: [],
     __kicked: [],
+    __invited: [],
     __banCollection: new Collection(),
     bans: {
       fetch: async () => guild.__banCollection,
@@ -331,6 +364,11 @@ function makeGuild(options = {}) {
       'ReadMessageHistory',
       'SendMessages',
       'ModerateMembers',
+      'ManageNicknames',
+      'MoveMembers',
+      'Connect',
+      'ManageGuild',
+      'CreateInstantInvite',
       'EmbedLinks',
       'BanMembers',
       'KickMembers',

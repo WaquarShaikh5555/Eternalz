@@ -15,6 +15,8 @@ const channelTools = require('./channels');
 const roleTools = require('./roles');
 const messagingTools = require('./messaging');
 const moderationTools = require('./moderation');
+const memberTools = require('./members');
+const serverTools = require('./server');
 const communityTools = require('./community');
 
 const ALL_TOOLS = [
@@ -23,6 +25,8 @@ const ALL_TOOLS = [
   ...roleTools,
   ...messagingTools,
   ...moderationTools,
+  ...memberTools,
+  ...serverTools,
   ...communityTools,
 ];
 

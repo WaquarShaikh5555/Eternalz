@@ -192,7 +192,7 @@ const getRolePermissions = {
 
 const getMemberRoles = {
   name: 'get_member_roles',
-  description: 'List the roles a specific member currently holds.',
+  description: 'Inspect a member: nickname, join time, timeout/voice state and current roles.',
   mutating: false,
   parameters: {
     type: 'object',
@@ -211,6 +211,12 @@ const getMemberRoles = {
       data: {
         id: member.id,
         username: member.user.username,
+        displayName: member.displayName,
+        nickname: member.nickname || null,
+        bot: Boolean(member.user.bot),
+        joinedAt: member.joinedAt?.toISOString?.() || null,
+        communicationDisabledUntilTimestamp: member.communicationDisabledUntilTimestamp || null,
+        voiceChannelId: member.voice?.channelId || null,
         roles: [...member.roles.cache.values()].map((r) => ({
           id: r.id,
           name: r.name,

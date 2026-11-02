@@ -68,6 +68,16 @@ const TOOL_PERMISSIONS = {
   assign_role: ['ManageRoles'],
   remove_role: ['ManageRoles'],
 
+  // member administration
+  set_member_nickname: ['ManageNicknames'],
+  move_member_voice: ['MoveMembers', 'Connect'],
+  disconnect_member_voice: ['MoveMembers'],
+
+  // guild settings and invites
+  set_server_name: ['ManageGuild'],
+  set_channel_nsfw: ['ManageChannels'],
+  create_invite: ['CreateInstantInvite'],
+
   // messaging
   send_announcement: ['SendMessages', 'EmbedLinks'],
   set_welcome_channel: ['SendMessages', 'EmbedLinks'],
@@ -76,6 +86,7 @@ const TOOL_PERMISSIONS = {
   ban_member: ['BanMembers'],
   kick_member: ['KickMembers'],
   timeout_member: ['ModerateMembers'],
+  clear_timeout: ['ModerateMembers'],
   unban_member: ['BanMembers'],
   delete_messages: ['ManageMessages'],
 
@@ -96,6 +107,10 @@ const PERMISSION_LABELS = {
   KickMembers: 'Kick Members',
   ModerateMembers: 'Timeout Members',
   ManageGuild: 'Manage Server',
+  ManageNicknames: 'Manage Nicknames',
+  MoveMembers: 'Move Members',
+  Connect: 'Connect',
+  CreateInstantInvite: 'Create Invite',
 };
 
 function decodePermissions(bitfield) {
