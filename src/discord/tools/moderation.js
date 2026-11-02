@@ -155,11 +155,66 @@ const timeoutMember = {
   },
 };
 
+const clearTimeout = {
+  name: 'clear_timeout',
+  description:
+    'Remove an existing timeout/mute from a member so they can talk again. Requires explicit confirmation.',
+  mutating: true,
+  moderation: true,
+  parameters: {
+    type: 'object',
+    properties: {
+      member: { type: 'string', maxLength: 120, description: 'Username, display name, mention or user id.' },
+      reason: { type: 'string', maxLength: 500, description: 'Reason shown in the audit log.' },
+    },
+    required: ['member'],
+    additionalProperties: false,
+  },
+  async execute(ctx, args) {
+    const { guild } = ctx;
+    assertBotPermissions(guild, ['ModerateMembers']);
+    const member = await resolveMember(guild, args.member);
+    const current = await member.fetch().catch(() => null);
+    if (!current) throw new Error('Could not read the current member state before clearing the timeout.');
+    assertBotOutranksMember(guild, current, ['ModerateMembers']);
+    if (ctx.actorMember) assertActorOutranksMember(guild, ctx.actorMember, current);
+
+    if (!current.communicationDisabledUntilTimestamp
+        || current.communicationDisabledUntilTimestamp <= Date.now()) {
+      return {
+        ok: true,
+        skipped: true,
+        message: `${current.user.username} is not currently timed out; no change was needed.`,
+        data: { memberId: current.id, memberName: current.user.username, unchanged: true },
+        reversal: null,
+      };
+    }
+
+    const reason = args.reason || 'Timeout cleared by the Eternalz AI administrator.';
+    await current.timeout(null, reason);
+    const verified = await current.fetch().catch(() => null);
+    if (!verified) throw new Error('Could not re-read the member to verify the timeout was cleared.');
+    if (verified.communicationDisabledUntilTimestamp
+        && verified.communicationDisabledUntilTimestamp > Date.now()) {
+      throw new Error('The timeout is still active after Discord accepted the clear request.');
+    }
+
+    return {
+      ok: true,
+      message: `Cleared the timeout for ${current.user.username}.`,
+      data: { memberId: current.id, memberName: current.user.username },
+      reversal: null,
+      note: 'The previous timeout duration cannot be restored automatically.',
+    };
+  },
+};
+
 const unbanMember = {
   name: 'unban_member',
   description:
-    'Lift a ban and let a user back into the server. Use this when a ban was a mistake.',
+    'Lift a ban and let a user back into the server. Use this when a ban was a mistake. Requires explicit confirmation.',
   mutating: true,
+  moderation: true,
   parameters: {
     type: 'object',
     properties: {
@@ -252,4 +307,4 @@ const deleteMessages = {
   },
 };
 
-module.exports = [banMember, kickMember, timeoutMember, unbanMember, deleteMessages];
+module.exports = [banMember, kickMember, timeoutMember, clearTimeout, unbanMember, deleteMessages];

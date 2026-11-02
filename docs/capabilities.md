@@ -1,13 +1,18 @@
 # What the AI administrator can and cannot do
 
-This is the honest capability list. It is generated from the same tool
-allowlist the bot uses, so it cannot drift from the implementation.
+This is the honest capability list. It mirrors the fixed tool allowlist the
+bot uses; unknown operations are rejected rather than improvised.
 
 ## How to read this
 
 The bot can do **anything that maps onto the tools below**, including
 combinations of them in one request. Anything not on this list is **not
 implemented**, and the model is instructed to say so instead of improvising.
+
+Unambiguous single-action requests can be planned deterministically without a
+provider call. Complex requests use the model; malformed model-only plans get
+one bounded correction with exact validation errors. Every path uses the same
+validation, authorization, confirmation and fresh-state execution checks.
 
 ## Read / inspect (always automatic)
 
@@ -18,7 +23,7 @@ implemented**, and the model is instructed to say so instead of improvising.
 | List every role with its position, colour, member count and decoded permissions | `list_roles` |
 | The permission overwrites of one channel | `get_channel_overwrites` |
 | The decoded permissions of one role | `get_role_permissions` |
-| The roles held by one member | `get_member_roles` |
+| Member nickname, join time, timeout/voice state and roles | `get_member_roles` |
 | A complete server snapshot in one call | `get_server_snapshot` |
 
 ## Channels and categories
@@ -31,13 +36,14 @@ implemented**, and the model is instructed to say so instead of improvising.
 | Rename a channel or a category | `rename_channel` | automatic |
 | Set or clear a channel topic | `set_channel_topic` | automatic |
 | Set slowmode (0 = off, up to 6 hours) | `set_channel_slowmode` | automatic |
+| Enable / disable a channel's age restriction | `set_channel_nsfw` | one confirmation |
 | Move a channel into / out of a category, or change its position | `move_channel` | automatic |
 | Delete a channel or a category | `delete_channel` | one confirmation |
 | Create or change a permission overwrite on an existing channel | `set_permission_overwrite` | one confirmation |
 | Remove a permission overwrite | `delete_permission_overwrite` | one confirmation |
 
-**Not implemented:** channel NSFW flag, channel user limit / bitrate,
-threads, pinned messages, voice region, stage instances, forum post tags.
+**Not implemented:** channel user limit / bitrate, threads, pinned messages,
+voice region, stage instances, forum post tags.
 
 ## Roles
 
@@ -61,22 +67,35 @@ edited or deleted.
 **Not implemented:** role icons, role ordering / drag-and-drop, role
 subscriptions, role mention permissions for other roles.
 
+## Member administration
+
+| Capability | Tool | Confirmation |
+| --- | --- | --- |
+| Change or clear a member nickname | `set_member_nickname` | automatic |
+| Move a connected member to another voice/stage channel | `move_member_voice` | one confirmation |
+| Disconnect a member from voice | `disconnect_member_voice` | one confirmation |
+
+Member and role hierarchy is checked for the bot and requester. Voice moves
+also require access to the destination channel. A disconnected member can
+rejoin; the bot does not claim it can restore the prior voice session.
+
 ## Moderation
 
 | Capability | Tool | Confirmation |
 | --- | --- | --- |
 | Mute / timeout a member for 1 minute – 28 days (5 minutes if omitted) | `timeout_member` | one confirmation |
+| Clear an active timeout | `clear_timeout` | one confirmation |
 | Kick a member | `kick_member` | one confirmation |
 | Ban a member (optionally deleting 0–7 days of messages) | `ban_member` | one confirmation |
-| Unban a user | `unban_member` | automatic |
+| Unban a user | `unban_member` | one confirmation |
 | Bulk delete 1–100 recent messages in a channel | `delete_messages` | one confirmation |
 
 Member targets accept a username, display name, numeric user id, or Discord
 `<@user-id>` mention. The bot's permission and role hierarchy are checked again
 before execution.
 
-**Not implemented:** timeout removal (clearing a timeout), warning systems,
-message pinning, automod rule editing, prune by role.
+**Not implemented:** warning systems, message pinning, automod rule editing,
+prune by role.
 
 ## Community and messaging
 
@@ -89,14 +108,25 @@ message pinning, automod rule editing, prune by role.
 | Publish the server rules | `set_server_rules` | automatic |
 
 **Not implemented:** Discord "Server Guide" / onboarding screens, rules
-screening, community / discovery toggles, scheduled events, stage events,
-custom invite links.
+screening, community / discovery toggles, scheduled events, stage events.
+
+## Server settings and invites
+
+| Capability | Tool | Confirmation |
+| --- | --- | --- |
+| Rename the current server | `set_server_name` | one confirmation |
+| Create an invite with expiry, use limit and temporary-membership options | `create_invite` | one confirmation |
+
+Invites default to a 24-hour expiry and unlimited uses. Expiry can be up to 7
+days; zero explicitly means no expiry / unlimited uses. Invite creation is
+never treated as reversible—the bot tells the administrator to revoke it
+manually when needed.
 
 ## Not implemented at all (server level)
 
-Server rename, server icon / banner, server verification level, AFK channel,
-system messages channel, server locale, server boosts, emojis, stickers,
-webhooks, integrations, widgets, audit-log reading, vanity URLs.
+Server icon / banner, server verification level, AFK channel, system messages
+channel, server locale, server boosts, emojis, stickers, webhooks, integrations,
+widgets, audit-log reading, vanity URLs, arbitrary REST endpoints.
 
 ## Safety limits that are never lifted
 

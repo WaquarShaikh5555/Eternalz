@@ -72,7 +72,14 @@ function assessAction(action) {
 
   if (def.securitySensitive) {
     level = maxLevel(level, RISK.CONFIRM);
-    reasons.push(`${tool} changes access control for an existing channel`);
+    reasons.push(def.confirmationReason
+      ? `${tool}: ${def.confirmationReason}`
+      : `${tool} changes access control for an existing channel`);
+  }
+
+  if (def.moderation) {
+    level = maxLevel(level, RISK.CONFIRM);
+    reasons.push(`${tool} changes a member's moderation status`);
   }
 
   switch (tool) {

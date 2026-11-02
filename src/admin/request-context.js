@@ -17,6 +17,8 @@ const CHANNEL_ACTIONS = new Set([
   'rename_channel',
   'set_channel_topic',
   'set_channel_slowmode',
+  'set_channel_nsfw',
+  'create_invite',
   'move_channel',
   'set_permission_overwrite',
   'delete_permission_overwrite',

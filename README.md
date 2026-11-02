@@ -73,10 +73,21 @@ them the onboarding role when they join.
 **Messaging** — post an announcement or a formatted embed when it is
 explicitly requested.
 
-**Moderation** — mute/timeout, kick, ban, unban, and bulk delete up to 100
-recent messages in a channel. Usernames, user ids and Discord `@member` mentions
-are accepted. A mute without a duration defaults to **5 minutes**. Mute, kick,
-ban and bulk delete always require confirmation.
+**Moderation** — mute/timeout, clear a timeout, kick, ban, unban, and bulk
+delete up to 100 recent messages in a channel. Usernames, user ids and Discord
+`@member` mentions are accepted. A mute without a duration defaults to
+**5 minutes**. All moderation-status changes and bulk deletion require
+confirmation.
+
+**Member administration** — change or clear nicknames, move a connected member
+between voice/stage channels, or disconnect them from voice. Nickname changes
+are reversible and automatic when explicitly requested; voice moderation
+requires confirmation.
+
+**Server & access** — rename the server, toggle a channel's age restriction,
+and create invites with bounded expiry/use limits. Ordinary invites expire
+after **24 hours** by default; a permanent invite must be requested explicitly.
+These guild/access changes require confirmation.
 
 **Permission self-check** — before planning or executing, the bot compares the
 required permissions with the ones it actually has and tells you exactly what
@@ -101,9 +112,9 @@ what is and is not supported.
    ├─ 1. Authorisation          owner / configured or granted admins, scoped per guild
    ├─ 2. Rate limit + cooldown  per user
    ├─ 3. Snapshot + context     fresh state + this user's latest confirmed result
-   ├─ 4. Inspection phase       the model may call read-only tools
-   ├─ 5. Planning phase         the model may call mutating tools
-   ├─ 6. Schema validation      every tool call is validated strictly
+   ├─ 4. Intent planning        deterministic direct plan or model inspection
+   ├─ 5. Model planning         complex requests use read then mutating tools
+   ├─ 6. Validation + repair    strict schemas; one exact-error correction
    ├─ 7. Risk classification    safe / confirm / confirm twice
    ├─ 8. Confirmation           buttons, bound to the requester, expiring
    ├─ 9. Execution              Discord.js calls, paced and retried
@@ -112,10 +123,16 @@ what is and is not supported.
    └─ 12. Audit                 database + optional private audit channel
 ```
 
-Two model calls are used for a typical request (inspection + planning). The
-server overview, tool schemas, read results and completion budget are bounded
-so the normal flow fits free-provider token limits; read tools are used only
-when the overview lacks a needed detail.
+Common, unambiguous single-action requests use a deterministic direct planner
+and need **no AI-provider call**. Complex requests normally use inspection +
+planning. If the model returns only invalid tool calls, the planner gives it
+one bounded correction containing the exact validation errors; mixed valid
+plans are not replayed. Direct and corrected plans use the same allowlist,
+authorization, confirmation and execution checks as any other plan.
+
+Server overviews, tool schemas, read results and completion budgets are bounded
+to fit free-provider limits. Read tools are used only when the overview lacks
+a needed detail.
 
 For a separate follow-up such as **“rename it to lobby”**, the planner receives
 only the latest confirmed successful result (for up to 30 minutes) from the
@@ -129,8 +146,8 @@ are not treated as completed context.
 
 | Level | Meaning | Examples |
 | --- | --- | --- |
-| `safe` | Executed automatically | create a channel, rename a channel, create a plain role, assign a plain role, post an announcement |
-| `confirm` | One explicit confirmation | delete a channel / category / role, ban, kick, any permission overwrite on an existing channel, changing the permissions of an existing role, creating a private channel, creating a role with a privileged permission |
+| `safe` | Executed automatically | create/rename a channel, change a topic or nickname, create/assign a plain role, post an explicitly requested announcement |
+| `confirm` | One explicit confirmation | deletions, all moderation status changes, voice move/disconnect, server rename, NSFW changes, invites, access/permission changes, privileged role changes |
 | `confirm_twice` | Two separate confirmations | granting `Administrator`, three or more destructive actions in one plan, removing a role from three or more members at once |
 
 The classification is derived from the **tool identity and its arguments** —
@@ -314,6 +331,11 @@ Any other OpenAI-compatible service works with `AI_PROVIDER=custom` plus
    * Embed Links
    * Ban Members
    * Kick Members
+   * Timeout Members
+   * Manage Nicknames
+   * Move Members
+   * Manage Server
+   * Create Invite
    * Read Message History
    * View Channels
 4. Copy the generated URL and open it in a browser, then choose your server.
@@ -495,7 +517,8 @@ src/
     provider.js               provider factory and fallback chain
     openai-compatible.js      Groq / OpenRouter / OpenAI (fetch based)
     gemini.js                 native Gemini API
-    planner.js                inspection phase + planning phase
+    planner.js                model inspection, planning and bounded correction
+    direct-planner.js         high-confidence no-provider intent handling
     validate.js               dependency-free JSON-Schema subset validator
   discord/
     events.js                welcome / onboarding on guildMemberAdd
@@ -538,7 +561,9 @@ The test suite covers:
 * **tool-call validation** — unknown tools, wrong types, missing fields,
   unknown fields, out-of-range values and enum violations;
 * **model-response validation** — malformed tool calls, duplicate actions,
-  oversized plans and prose-only answers;
+  oversized plans, prose-only answers and one bounded exact-error correction;
+* **deterministic intent handling** — common requests execute without a
+  provider, while ambiguous, compound and invalid-duration requests fall back;
 * **duplicate prevention** — existing channels, categories and roles are
   skipped, not duplicated;
 * **confirmation** — requester binding, expiry, cancellation and the
@@ -552,8 +577,9 @@ The test suite covers:
   quota error, 401 → no retry, 5xx → retry, invalid JSON, and the native
   Gemini format and model-ending request regression (against a local HTTP server);
 * **the full request flow** — plain-language requests through the mocked
-  Discord API, including create-then-rename follow-ups and mention-based mute,
-  kick and ban operations that cannot execute before confirmation.
+  Discord API, including create-then-rename follow-ups, mention-based
+  moderation, nicknames, topics, slowmode, voice state, server/NSFW settings
+  and invites, with no sensitive operation executing before confirmation.
 
 ---
 
@@ -572,16 +598,17 @@ The test suite covers:
 
 * The AI can only work with the tools listed in
   [docs/capabilities.md](docs/capabilities.md). It cannot, for example, create
-  a webhook, edit a member's nickname, manage emojis, change the server name
-  or icon, or schedule a message.
+  a webhook, manage emojis, change the server icon, or schedule a message.
 * Privileged roles (anything carrying `Administrator`, `ManageGuild`,
   `ManageRoles`, …) can be created with confirmation but can never be assigned
   or removed from a member by the AI.
 * Deletions, bans and kicks cannot be rolled back by the bot. The audit log
   records the previous state of *reversible* changes (previous name, previous
   topic, previous permissions) so an administrator can undo them by hand.
-* Free AI tiers are rate limited. One `/ai` request costs at least two model
-  calls.
-* The AI administrator is restricted to a single guild (`DISCORD_GUILD_ID`).
+* Free AI tiers are rate limited. Direct requests need no model call; complex
+  requests normally use two, with bounded nudges/correction potentially adding
+  a call.
+* AI administration is restricted to `DISCORD_GUILD_ID` unless the explicit,
+  default-deny `AI_MULTI_GUILD=true` mode is configured.
 * The bot does not implement a dashboard; everything happens through the slash
   commands.
