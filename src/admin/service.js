@@ -12,7 +12,12 @@
  * again inside `executeActions` before any change is made.
  */
 
-const { EmbedBuilder } = require('discord.js');
+const {
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} = require('discord.js');
 
 const { createPlan } = require('../ai/planner');
 const { buildGuildSnapshot } = require('../discord/snapshot');
@@ -34,6 +39,12 @@ const {
 } = require('./confirmation');
 const { AuthorizationError, toError } = require('../core/errors');
 const { loadRecentRequestContext } = require('./request-context');
+const {
+  isOpenEndedDesignRequest,
+  designPlanProblem,
+} = require('./design-options');
+const { createUndoState, publicUndoState, assertUndoPreconditions } = require('./undo');
+const { randomUUID } = require('node:crypto');
 
 /**
  * Read the real Discord slash-command option.
@@ -101,6 +112,10 @@ async function handleAdminRequest(options) {
     );
   }
 
+  if (!/[\r\n]/.test(prompt) && isOpenEndedDesignRequest(prompt) && !dryRun) {
+    return { kind: 'design_options', prompt };
+  }
+
   const cooldownKey = `${guildId}:${requesterId}`;
   if (!options.skipRateLimit) {
     const cooldownLeft = cooldown?.remaining(cooldownKey) || 0;
@@ -155,9 +170,34 @@ async function handleAdminRequest(options) {
   });
 
   const actions = plan.actions || [];
+  const designProblem = isOpenEndedDesignRequest(prompt) ? designPlanProblem(actions) : null;
+  if (designProblem) {
+    const rejected = [...(plan.rejected || []), { tool: '(design)', reason: designProblem }];
+    await audit?.log({
+      guildId,
+      requesterId,
+      event: 'plan_rejected',
+      prompt,
+      summary: { reason: designProblem },
+      notify: false,
+    });
+    return {
+      kind: 'no_action',
+      notes: 'I could not turn that direction into a useful redesign. Choose another option or describe the exact channels, categories or colours you want.',
+      rejected,
+    };
+  }
 
   // --- 5. Classify the risk -------------------------------------------------
-  const assessment = assessPlan(actions);
+  let assessment = assessPlan(actions);
+  if (actions.length && isOpenEndedDesignRequest(prompt)
+      && (assessment.level === RISK.SAFE || assessment.level === RISK.READ)) {
+    assessment = {
+      ...assessment,
+      level: RISK.CONFIRM,
+      reasons: [...assessment.reasons, 'an open-ended redesign requires approval of the exact preview'],
+    };
+  }
 
   // Check up-front whether the bot is even allowed to perform these actions.
   const gaps = planPermissionGaps(guild, actions);
@@ -228,7 +268,17 @@ async function handleAdminRequest(options) {
       summary: summariseResult(result),
     });
 
-    return { kind: 'executed', report: result, notes: plan.notes, gaps };
+    const undo = await persistExecution({
+      storage,
+      logger,
+      guildId,
+      requesterId,
+      prompt,
+      actions,
+      result,
+      permissionGaps: gaps,
+    });
+    return { kind: 'executed', report: result, notes: plan.notes, gaps, undo };
   }
 
   // --- 8. Ask for confirmation --------------------------------------------
@@ -298,6 +348,10 @@ async function handlePlanButton(options) {
       ephemeral: true,
     });
     return { kind: 'unauthorised' };
+  }
+
+  if (action === 'undo') {
+    return handleUndoRequest(options, plan, actorMember);
   }
 
   if (plan.status !== STATUS.PENDING) {
@@ -418,11 +472,14 @@ async function handlePlanButton(options) {
     return { kind: 'failed', error };
   }
 
-  await storage.updatePlan(plan.id, {
+  const undoState = createUndoState(result);
+  const updatedPlan = await storage.updatePlan(plan.id, {
     status: STATUS.EXECUTED,
     executedAt: Date.now(),
     result: summariseResult(result),
+    undo: undoState,
   });
+  const undo = publicUndoState({ ...plan, undo: undoState });
 
   await audit?.log({
     guildId,
@@ -433,9 +490,121 @@ async function handlePlanButton(options) {
   });
 
   const embed = buildResultEmbed(result, plan, plan.permissionGaps);
-  await interaction.editReply({ embeds: [embed], components: [] });
+  addUndoSummary(embed, undo);
+  await interaction.editReply({ embeds: [embed], components: buildUndoComponents(undo) });
 
-  return { kind: 'executed', report: result, plan };
+  return { kind: 'executed', report: result, plan: updatedPlan || plan, undo };
+}
+
+const undoLocks = new Set();
+
+async function handleUndoRequest(options, plan, actorMember) {
+  const { interaction, config, storage, audit, logger, client, guild } = options;
+  const requesterId = interaction.user.id;
+  const undo = plan.undo;
+
+  if (plan.status !== STATUS.EXECUTED || !undo?.actions?.length) {
+    await interaction.reply({ content: 'This result has no available Undo operation.', ephemeral: true });
+    return { kind: 'undo_unavailable' };
+  }
+  if (Date.now() > undo.expiresAt) {
+    await interaction.reply({ content: 'This Undo window has expired. Please make any correction with a new request.', ephemeral: true });
+    return { kind: 'undo_expired' };
+  }
+  if (undoLocks.has(plan.id) || plan.undoInProgress) {
+    await interaction.reply({ content: 'Undo is already being applied.', ephemeral: true });
+    return { kind: 'undo_in_progress' };
+  }
+
+  if (!(await isGuildAdminWithGrants(config, storage, guild, requesterId, actorMember))) {
+    await interaction.reply({
+      content: 'Your administrator access changed, so Undo was not applied.',
+      ephemeral: true,
+    });
+    return { kind: 'unauthorised' };
+  }
+
+  if (assessPlan(undo.actions).level === RISK.CONFIRM_TWICE) {
+    await interaction.reply({
+      content: 'This Undo would require a separate high-risk confirmation. Please use a new reviewed request.',
+      ephemeral: true,
+    });
+    return { kind: 'undo_unavailable' };
+  }
+
+  try {
+    await assertUndoPreconditions(guild, undo.actions);
+  } catch (error) {
+    await interaction.reply({ content: toError(error).message.slice(0, 500), ephemeral: true });
+    return { kind: 'undo_stale', error };
+  }
+
+  if (undoLocks.has(plan.id)) {
+    await interaction.reply({ content: 'Undo is already being applied.', ephemeral: true });
+    return { kind: 'undo_in_progress' };
+  }
+  undoLocks.add(plan.id);
+  try {
+    await interaction.deferUpdate();
+    await storage.updatePlan(plan.id, { undoInProgress: true });
+    const ctx = {
+      guild,
+      client,
+      storage,
+      logger,
+      actorMember,
+      requesterId,
+      snapshot: buildGuildSnapshot(guild, guild.members?.me),
+    };
+    const result = await executeActions({
+      actions: undo.actions,
+      ctx,
+      config,
+      logger,
+      guild,
+      requesterId,
+    });
+    const complete = result.failed.length === 0
+      && result.skipped.length === 0
+      && result.succeeded.length === undo.actions.length;
+    const nextUndo = complete ? { ...undo, actions: [] } : undo;
+    await storage.updatePlan(plan.id, {
+      status: complete ? STATUS.UNDONE : STATUS.UNDO_FAILED,
+      undoInProgress: false,
+      undo: nextUndo,
+      undoResult: summariseResult(result),
+      undoneAt: complete ? Date.now() : null,
+    });
+    await audit?.log({
+      guildId: guild.id,
+      requesterId,
+      event: complete ? 'undone' : 'undo_failed',
+      prompt: plan.prompt,
+      summary: { planId: plan.id, ...summariseResult(result) },
+    });
+
+    const embed = buildResultEmbed(result, { ...plan, actions: undo.actions }, null)
+      .setTitle(complete ? 'Changes undone' : 'Undo incomplete')
+      .setColor(complete ? 0x2ecc71 : 0xe67e22);
+    if (!complete) {
+      embed.addFields({
+        name: 'Manual attention needed',
+        value: 'Only the reversals shown as succeeded were applied. Failed reversals were not retried automatically, so no successful undo is repeated.',
+      });
+    }
+    await interaction.editReply({ embeds: [embed], components: [] });
+    return { kind: complete ? 'undone' : 'undo_failed', report: result };
+  } catch (error) {
+    await storage.updatePlan(plan.id, { undoInProgress: false }).catch(() => {});
+    logger?.warn?.('ai: undo failed', { reason: toError(error).message });
+    await interaction.editReply({
+      content: `⚠️ Undo could not be completed: ${toError(error).message.slice(0, 400)}`,
+      components: [],
+    }).catch(() => {});
+    return { kind: 'undo_failed', error };
+  } finally {
+    undoLocks.delete(plan.id);
+  }
 }
 
 /**
@@ -451,6 +620,75 @@ async function executeActions({ actions, ctx, config, logger, guild, requesterId
       await assertGuildAdminWithGrants(config, ctx.storage, guild, requesterId, ctx.actorMember);
     },
   });
+}
+
+async function persistExecution({
+  storage,
+  logger,
+  guildId,
+  requesterId,
+  prompt,
+  actions,
+  result,
+  permissionGaps = null,
+}) {
+  const undo = createUndoState(result);
+  const now = Date.now();
+  const record = {
+    id: randomUUID(),
+    guildId,
+    requesterId,
+    prompt: String(prompt || '').slice(0, 2000),
+    actions,
+    risk: RISK.SAFE,
+    reasons: [],
+    status: STATUS.EXECUTED,
+    createdAt: now,
+    expiresAt: undo.expiresAt,
+    executedAt: now,
+    result: summariseResult(result),
+    permissionGaps,
+    undo,
+  };
+  // There is no button to persist when no reliable inverse exists. Keep the
+  // normal audit result, but avoid filling the plan store with one-off records
+  // for creates, deletes and fully skipped executions.
+  if (!undo.actions.length) return publicUndoState(record);
+  try {
+    await storage.putPlan(record);
+    return publicUndoState(record);
+  } catch (error) {
+    // Discord has already confirmed the changes. Never turn a bookkeeping
+    // failure into a misleading execution failure; just omit the Undo button.
+    logger?.warn?.('ai: could not persist undo state', { reason: toError(error).message });
+    return null;
+  }
+}
+
+function buildUndoComponents(undo) {
+  if (!undo?.available) return [];
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ai_admin:undo:${undo.planId}`)
+      .setLabel(`Undo${undo.count ? ` (${undo.count})` : ''}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('↩️'),
+  )];
+}
+
+function addUndoSummary(embed, undo) {
+  if (!undo) return;
+  if (undo.available) {
+    embed.addFields({
+      name: 'Undo',
+      value: `${undo.count} reversible change${undo.count === 1 ? '' : 's'} can be restored. The Undo button expires <t:${Math.floor(undo.expiresAt / 1000)}:R>.`,
+    });
+  } else if (undo.unavailable?.length) {
+    embed.addFields({
+      name: 'Undo unavailable',
+      value: undo.unavailable.map((item) => `• ${item.tool}: ${item.reason}`).join('\n').slice(0, 1000),
+    });
+  }
 }
 
 /** Compact summary used for the audit log. */
@@ -542,6 +780,7 @@ module.exports = {
   handlePlanButton,
   executeActions,
   buildResultEmbed,
+  buildUndoComponents,
   summariseResult,
   riskLabel,
   riskColour,

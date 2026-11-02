@@ -122,6 +122,27 @@ days; zero explicitly means no expiry / unlimited uses. Invite creation is
 never treated as reversible—the bot tells the administrator to revoke it
 manually when needed.
 
+## Design choices and Undo
+
+Broad appearance requests first offer Clean & minimal, Welcoming community,
+Gaming & esports, or a custom direction. Choosing a direction does not execute
+anything; the exact redesign plan requires confirmation. Names that merely
+repeat the instruction are rejected.
+
+Finished results use **Close**, which only removes the message buttons. Pending
+plans retain their separate **Cancel** action. For 15 minutes after execution,
+**Undo** can run captured, schema-validated reversals for supported edits such
+as channel/category names, topics, slowmode, channel moves, ordinary role edits,
+non-privileged role assignment/removal, member/bot nicknames, server name, NSFW
+state, and captured permission overwrites. Every reversal revalidates access,
+permissions and current Discord state through the normal tools.
+
+There is no fake universal rollback. Deleted content, deleted channels/roles,
+kicks, bans, invites, voice disconnection and operations without a reliable
+inverse are not automatically undone. Newly created channels/roles are not
+automatically deleted because subsequent content or assignments could be lost.
+Partial Undo failures are reported without repeating successful reversals.
+
 ## Not implemented at all (server level)
 
 Server icon / banner, server verification level, AFK channel, system messages

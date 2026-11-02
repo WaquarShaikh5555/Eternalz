@@ -28,9 +28,15 @@ const {
   canUseConversation,
 } = require('./conversation');
 const { AuthorizationError, AiProviderError, AiQuotaError, toError } = require('../core/errors');
+const {
+  DESIGN_OPTIONS,
+  getDesignOption,
+  applyDesignChoice,
+} = require('./design-options');
 
 const REFINE_BUTTON = 'ai_admin:refine';
 const DISMISS_BUTTON = 'ai_admin:dismiss';
+const DESIGN_BUTTON = 'ai_admin:design';
 const REFINE_MODAL = 'ai_admin:refine_modal';
 
 function idPart(customId, prefix) {
@@ -39,25 +45,69 @@ function idPart(customId, prefix) {
   return value.startsWith(start) ? value.slice(start.length) : null;
 }
 
+function designIdParts(customId) {
+  const value = idPart(customId, DESIGN_BUTTON);
+  if (value === null) return null;
+  const split = value.lastIndexOf(':');
+  if (split <= 0 || split === value.length - 1) return null;
+  return { sessionId: value.slice(0, split), optionId: value.slice(split + 1) };
+}
+
 function isConversationButton(customId) {
-  return idPart(customId, REFINE_BUTTON) !== null || idPart(customId, DISMISS_BUTTON) !== null;
+  return idPart(customId, REFINE_BUTTON) !== null
+    || idPart(customId, DISMISS_BUTTON) !== null
+    || idPart(customId, DESIGN_BUTTON) !== null;
 }
 
 function isConversationModal(customId) {
   return idPart(customId, REFINE_MODAL) !== null;
 }
 
-function buildConversationRow(sessionId, label = 'Answer / refine') {
-  return new ActionRowBuilder().addComponents(
+function buildConversationRow(sessionId, label = 'Answer / refine', undo = null) {
+  const row = new ActionRowBuilder();
+  if (undo?.available) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ai_admin:undo:${undo.planId}`)
+        .setLabel(`Undo${undo.count ? ` (${undo.count})` : ''}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('↩️'),
+    );
+  }
+  return row.addComponents(
     new ButtonBuilder()
       .setCustomId(`${REFINE_BUTTON}:${sessionId}`)
       .setLabel(label)
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`${DISMISS_BUTTON}:${sessionId}`)
-      .setLabel('Dismiss')
+      .setLabel('Close')
       .setStyle(ButtonStyle.Secondary),
   );
+}
+
+function buildDesignRows(sessionId) {
+  const row = new ActionRowBuilder();
+  for (const option of DESIGN_OPTIONS) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${DESIGN_BUTTON}:${sessionId}:${option.id}`)
+        .setLabel(option.label)
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji(option.emoji),
+    );
+  }
+  row.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${REFINE_BUTTON}:${sessionId}`)
+      .setLabel('Custom direction')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`${DISMISS_BUTTON}:${sessionId}`)
+      .setLabel('Close')
+      .setStyle(ButtonStyle.Secondary),
+  );
+  return [row];
 }
 
 function buildRefineModal(session) {
@@ -101,6 +151,23 @@ async function renderAdminError(interaction, rawError) {
   await editOrReply(interaction, { content, embeds: [], components: [] });
 }
 
+function addUndoField(embed, undo) {
+  if (!undo) return;
+  const unavailable = undo.unavailable || [];
+  if (undo.available) {
+    const expiry = Math.floor(undo.expiresAt / 1000);
+    embed.addFields({
+      name: 'Undo',
+      value: `${undo.count} reversible change${undo.count === 1 ? '' : 's'} can be restored with **Undo**. It expires <t:${expiry}:R>.${unavailable.length ? ` ${unavailable.length} other change${unavailable.length === 1 ? '' : 's'} cannot be automatically reversed.` : ''}`,
+    });
+  } else if (unavailable.length) {
+    embed.addFields({
+      name: 'Undo unavailable',
+      value: unavailable.map((item) => `• ${item.tool}: ${item.reason}`).join('\n').slice(0, 1000),
+    });
+  }
+}
+
 /** Render the outcome of an AI administration request. */
 async function renderAdminResult(interaction, result, context = {}) {
   const prompt = context.prompt || '';
@@ -119,10 +186,37 @@ async function renderAdminResult(interaction, result, context = {}) {
           requesterId: interaction.user.id,
           prompt,
         });
-        components.push(buildConversationRow(session.id, 'Follow up'));
+        components.push(buildConversationRow(session.id, 'Follow up', result.undo));
       }
+      addUndoField(embed, result.undo);
 
       await editOrReply(interaction, { content: null, embeds: [embed], components });
+      return;
+    }
+
+    case 'design_options': {
+      const embed = new EmbedBuilder()
+        .setTitle('Choose a design direction')
+        .setColor(0x5865f2)
+        .setDescription(
+          'I can help redesign the server, but I will not guess with arbitrary renames. Pick a direction below. Nothing has changed yet; you will see the exact plan before anything is applied.',
+        )
+        .addFields(DESIGN_OPTIONS.map((option) => ({
+          name: `${option.emoji} ${option.label}`,
+          value: option.description,
+          inline: false,
+        })));
+      const session = createConversation({
+        guildId: interaction.guild.id,
+        requesterId: interaction.user.id,
+        prompt,
+        question: 'Choose a design direction',
+      });
+      await editOrReply(interaction, {
+        content: null,
+        embeds: [embed],
+        components: buildDesignRows(session.id),
+      });
       return;
     }
 
@@ -196,11 +290,12 @@ async function renderAdminResult(interaction, result, context = {}) {
   }
 }
 
-/** Handle the Answer / refine and Dismiss buttons. */
-async function handleConversationButton(interaction) {
+/** Handle Answer / refine, design choices and Close buttons. */
+async function handleConversationButton(interaction, runtime = {}) {
   const refineId = idPart(interaction.customId, REFINE_BUTTON);
   const dismissId = idPart(interaction.customId, DISMISS_BUTTON);
-  const sessionId = refineId || dismissId;
+  const design = designIdParts(interaction.customId);
+  const sessionId = refineId || dismissId || design?.sessionId;
   const session = getConversation(sessionId);
 
   if (!session) {
@@ -213,7 +308,7 @@ async function handleConversationButton(interaction) {
 
   if (!canUseConversation(session, interaction)) {
     await interaction.reply({
-      content: 'Only the person who started this request can answer it.',
+      content: 'Only the person who started this request can use these buttons.',
       ephemeral: true,
     });
     return { kind: 'unauthorised' };
@@ -222,8 +317,23 @@ async function handleConversationButton(interaction) {
   if (dismissId) {
     deleteConversation(sessionId);
     await interaction.deferUpdate();
+    // This only closes a finished/no-action result. It never cancels a plan
+    // or rolls back a change; pending plans use their separate Cancel button.
     await interaction.editReply({ components: [] });
-    return { kind: 'dismissed' };
+    return { kind: 'closed' };
+  }
+
+  if (design) {
+    const option = getDesignOption(design.optionId);
+    if (!option) {
+      await interaction.reply({ content: 'That design option is not available.', ephemeral: true });
+      return { kind: 'ignored' };
+    }
+    return runConversationFollowup(
+      { ...runtime, interaction },
+      session,
+      applyDesignChoice(session.prompt, option.id),
+    );
   }
 
   await interaction.showModal(buildRefineModal(session));
@@ -236,18 +346,7 @@ async function handleConversationButton(interaction) {
  * bypass the normal validation, risk or confirmation pipeline.
  */
 async function handleConversationModal(options) {
-  const {
-    interaction,
-    guild,
-    config,
-    storage,
-    audit,
-    logger,
-    limiter,
-    cooldown,
-    provider,
-    client,
-  } = options;
+  const { interaction } = options;
 
   const sessionId = idPart(interaction.customId, REFINE_MODAL);
   const session = getConversation(sessionId);
@@ -267,7 +366,24 @@ async function handleConversationModal(options) {
   }
 
   const prompt = `${session.prompt}\n\nFollow-up from the administrator: ${answer}`;
-  updateConversation(sessionId, { prompt });
+  return runConversationFollowup(options, session, prompt);
+}
+
+async function runConversationFollowup(options, session, prompt) {
+  const {
+    interaction,
+    guild,
+    config,
+    storage,
+    audit,
+    logger,
+    limiter,
+    cooldown,
+    provider,
+    client,
+  } = options;
+
+  updateConversation(session.id, { prompt });
 
   // Acknowledge quickly, then use the original message for progress/result.
   if (interaction.message && typeof interaction.deferUpdate === 'function') {
@@ -315,6 +431,7 @@ async function handleConversationModal(options) {
 module.exports = {
   REFINE_BUTTON,
   DISMISS_BUTTON,
+  DESIGN_BUTTON,
   REFINE_MODAL,
   isConversationButton,
   isConversationModal,

@@ -92,11 +92,13 @@ async function loadRecentRequestContext(storage, guildId, requesterId, snapshot,
     const entries = await storage.listAudit(guildId, 25);
     const latest = entries.find((entry) => (
       entry.requesterId === requesterId
-      && (entry.event === 'executed' || entry.event === 'partial_failure')
-      && Array.isArray(entry.summary?.succeeded)
-      && entry.summary.succeeded.length > 0
+      && ['executed', 'partial_failure', 'undone', 'undo_failed'].includes(entry.event)
     ));
-    if (!latest) return null;
+    // An Undo changes the meaning of the earlier execution record. Never
+    // resolve "it" against a stale pre-Undo result; a partial Undo is also
+    // unsafe as a single-entity reference.
+    if (!latest || latest.event === 'undone' || latest.event === 'undo_failed') return null;
+    if (!Array.isArray(latest.summary?.succeeded) || latest.summary.succeeded.length === 0) return null;
     const createdAt = Number(latest.createdAt) || 0;
     if (!createdAt || Date.now() - createdAt > CONTEXT_TTL_MS) return null;
 

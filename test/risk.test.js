@@ -103,6 +103,14 @@ test('removing a role from a single member stays safe', () => {
   assert.equal(plan.level, RISK.SAFE);
 });
 
+test('a plan containing only an Administrator change stays two-confirmation', () => {
+  const plan = assessPlan([
+    { tool: 'edit_role', args: { role: 'Staff', permissions: ['Administrator'] } },
+  ]);
+  assert.equal(plan.level, RISK.CONFIRM_TWICE);
+  assert.equal(plan.counts.confirmTwice, 1);
+});
+
 test('an empty plan is read-only', () => {
   const plan = assessPlan([]);
   assert.equal(plan.level, RISK.READ);

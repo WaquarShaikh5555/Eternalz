@@ -104,6 +104,11 @@ function parseDuration(value) {
 }
 
 function planRename(text, snapshot, recentContext) {
+  // An explicit bot/self nickname request must never fall through to a
+  // channel named "bot" when its nickname is invalid or unavailable.
+  if (/^(?:rename|change|set)\s+(?:yourself|your\s+(?:name|nickname|nick)|(?:the\s+)?bot(?:'s)?(?:\s+(?:name|nickname|nick))?)\s+to\s+/i.test(text)) {
+    return null;
+  }
   const match = text.match(/^(?:rename|change the name of)\s+(.+?)\s+(?:to|into)\s+(.+)$/i);
   if (!match) return null;
   const target = findChannel(snapshot, match[1], recentContext);
@@ -200,7 +205,19 @@ function directMemberReference(raw) {
   return member;
 }
 
-function planNickname(text) {
+function planNickname(text, snapshot) {
+  const self = text.match(
+    /^(?:rename|change|set)\s+(?:yourself|your\s+(?:name|nickname|nick)|(?:the\s+)?bot(?:'s)?(?:\s+(?:name|nickname|nick))?)\s+to\s+(.+)$/i,
+  ) || text.match(
+    /^(?:change|set)\s+(?:the\s+)?(?:name|nickname|nick)\s+of\s+(?:the\s+)?(?:bot|yourself)\s+to\s+(.+)$/i,
+  );
+  if (self) {
+    const nickname = unquote(self[1]);
+    return snapshot.bot?.id && nickname.length <= 32
+      ? [{ tool: 'set_member_nickname', args: { member: snapshot.bot.id, nickname } }]
+      : null;
+  }
+
   let match = text.match(/^(?:change|set)\s+(.+?)\s+(?:nickname|nick)\s+to\s+(.+)$/i);
   if (!match) {
     match = text.match(/^(?:change|set)\s+(?:the\s+)?nickname\s+of\s+(.+?)\s+to\s+(.+)$/i);
@@ -321,12 +338,12 @@ function createDirectActions({ prompt, snapshot, recentContext = null }) {
   ) || [];
   if (actionWords.length > 1) return null;
 
-  return planRename(text, snapshot, recentContext)
+  return planNickname(text, snapshot)
+    || planRename(text, snapshot, recentContext)
     || planCreateCategory(text)
     || planCreateChannel(text, snapshot)
     || planModeration(text)
     || planPurge(text, snapshot, recentContext)
-    || planNickname(text)
     || planServerName(text)
     || planNsfw(text, snapshot, recentContext)
     || planInvite(text, snapshot, recentContext)

@@ -20,6 +20,7 @@ const ACTION = {
   CONFIRM: 'confirm',
   CANCEL: 'cancel',
   CONFIRM_TWICE: 'confirm_twice',
+  UNDO: 'undo',
 };
 
 const CUSTOM_ID = {
@@ -35,6 +36,8 @@ const STATUS = {
   EXECUTED: 'executed',
   EXPIRED: 'expired',
   FAILED: 'failed',
+  UNDONE: 'undone',
+  UNDO_FAILED: 'undo_failed',
 };
 
 /** Create and persist a pending plan. */

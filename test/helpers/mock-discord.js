@@ -365,6 +365,7 @@ function makeGuild(options = {}) {
       'SendMessages',
       'ModerateMembers',
       'ManageNicknames',
+      'ChangeNickname',
       'MoveMembers',
       'Connect',
       'ManageGuild',

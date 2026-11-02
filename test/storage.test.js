@@ -29,6 +29,14 @@ async function exerciseStore(store) {
     confirmedAt: null,
     executedAt: null,
     result: null,
+    undo: {
+      actions: [{ tool: 'rename_channel', args: { channel: 'c1', name: 'general' } }],
+      unavailable: [],
+      expiresAt: 3000,
+    },
+    undoInProgress: false,
+    undoResult: null,
+    undoneAt: null,
   };
 
   await store.putPlan(plan);
@@ -36,6 +44,8 @@ async function exerciseStore(store) {
   assert.equal(loaded.guildId, 'guild-1');
   assert.equal(loaded.actions.length, 1);
   assert.equal(loaded.actions[0].args.name, 'Support');
+  assert.equal(loaded.undo.actions[0].args.name, 'general');
+  assert.equal(loaded.undoInProgress, false);
 
   await store.updatePlan('plan-1', { status: 'confirmed' });
   const updated = await store.getPlan('plan-1');

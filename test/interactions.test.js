@@ -107,7 +107,7 @@ test('extractPrompt uses the real Discord.js getString method', () => {
   assert.equal(extractPrompt(interaction), 'make the server look better');
 });
 
-test('a real slash-command prompt is not mistaken for an empty request', async () => {
+test('an open-ended slash-command prompt offers design choices before changing anything', async () => {
   const env = await makeEnvironment();
   const guild = makeGuild({ id: 'guild-1', ownerId: 'owner-1' });
   const provider = fakeProvider([
@@ -142,9 +142,8 @@ test('a real slash-command prompt is not mistaken for an empty request', async (
     provider,
   });
 
-  assert.equal(result.kind, 'executed');
-  assert.equal(result.report.succeeded.length, 1);
-  assert.ok(guild.channels.cache.find((channel) => channel.name === 'Community'));
+  assert.equal(result.kind, 'design_options');
+  assert.equal(guild.channels.cache.find((channel) => channel.name === 'Community'), undefined);
   await env.storage.close();
 });
 
@@ -222,7 +221,7 @@ test('a modal answer continues the request without another slash command', async
   const session = createConversation({
     guildId: 'guild-1',
     requesterId: 'owner-1',
-    prompt: 'improve the server',
+    prompt: 'create a category',
   });
 
   // Even an active cooldown must not block answering the follow-up.

@@ -22,10 +22,16 @@ const reasonArgument = {
   description: 'Reason shown in the audit log.',
 };
 
-async function manageableMember(ctx, input, permission, { allowActorSelf = false } = {}) {
+async function manageableMember(ctx, input, permission, { allowActorSelf = false, allowBotSelf = false } = {}) {
   const { guild } = ctx;
-  assertBotPermissions(guild, [permission]);
   const member = await resolveMember(guild, input);
+  if (allowBotSelf && member.id === guild.members?.me?.id) {
+    // Discord uses ChangeNickname (not role hierarchy) for a bot editing its
+    // own nickname. Other member administration keeps the strict checks.
+    assertBotPermissions(guild, ['ChangeNickname']);
+    return member;
+  }
+  assertBotPermissions(guild, [permission]);
   assertBotOutranksMember(guild, member, [permission]);
   if (ctx.actorMember && (!allowActorSelf || ctx.actorMember.id !== member.id)) {
     assertActorOutranksMember(guild, ctx.actorMember, member);
@@ -49,7 +55,10 @@ const setMemberNickname = {
     additionalProperties: false,
   },
   async execute(ctx, args) {
-    const member = await manageableMember(ctx, args.member, 'ManageNicknames', { allowActorSelf: true });
+    const member = await manageableMember(ctx, args.member, 'ManageNicknames', {
+      allowActorSelf: true,
+      allowBotSelf: true,
+    });
     const previous = member.nickname || '';
     const nickname = args.nickname.trim();
     if (previous === nickname) {
