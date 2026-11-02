@@ -161,6 +161,130 @@ test('Gemini never receives a model-ending request after prose inspection', asyn
   assert.match(requests[1].contents.at(-1).parts[0].text, /Continue with the current request/);
 });
 
+test('Gemini preserves sequential and parallel thought signatures and native call ids', async (t) => {
+  const requests = [];
+  const server = http.createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const payload = JSON.parse(body);
+    requests.push(payload);
+
+    if (requests.length === 2) {
+      const historical = payload.contents
+        .filter((content) => content.role === 'model')
+        .flatMap((content) => content.parts)
+        .filter((part) => part.functionCall);
+      const responses = payload.contents
+        .flatMap((content) => content.parts)
+        .filter((part) => part.functionResponse);
+      const invalid = historical.length !== 2
+        || historical[0].thoughtSignature !== 'signed-parallel-call'
+        || historical[1].thoughtSignature !== undefined
+        || historical[0].functionCall.id !== 'google-call-1'
+        || historical[1].functionCall.id !== 'google-call-2'
+        || responses[0]?.functionResponse?.id !== 'google-call-1'
+        || responses[1]?.functionResponse?.id !== 'google-call-2';
+      if (invalid) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: { message: 'Function call is missing a thought_signature in the request.' },
+        }));
+        return;
+      }
+    }
+
+    const parts = requests.length === 1
+      ? [
+          { functionCall: { id: 'google-call-1', name: 'list_channels', args: {} }, thoughtSignature: 'signed-parallel-call' },
+          { functionCall: { id: 'google-call-2', name: 'list_roles', args: {} } },
+        ]
+      : requests.length === 2
+        ? [{ text: 'I have enough information.' }]
+        : [{ functionCall: { name: 'create_category', args: { name: 'Support' } } }];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      candidates: [{ finishReason: 'STOP', content: { role: 'model', parts } }],
+    }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const provider = new GeminiProvider({
+    apiKey: 'test-key',
+    baseUrl: `http://127.0.0.1:${port}/v1beta`,
+    model: 'test-model',
+    timeoutMs: 5000,
+  });
+  const guild = makeGuild();
+  const plan = await createPlan({
+    provider,
+    config: { ...CONFIG, aiMaxPlanningRounds: 2 },
+    ctx: { guild, storage: {}, logger: null },
+    prompt: 'Create a Support category',
+    snapshot: buildGuildSnapshot(guild, guild.members.me),
+  });
+
+  assert.equal(plan.actions[0].tool, 'create_category');
+  assert.equal(requests.length, 3, 'signed history must be accepted without a retry');
+  const modelParts = requests[1].contents
+    .filter((content) => content.role === 'model')
+    .flatMap((content) => content.parts)
+    .filter((part) => part.functionCall);
+  assert.deepEqual(modelParts.map((part) => part.thoughtSignature), ['signed-parallel-call', undefined]);
+  assert.deepEqual(modelParts.map((part) => part.functionCall.name), ['list_channels', 'list_roles']);
+});
+
+test('Gemini retains a signature on each sequential call and omits invented response ids', async (t) => {
+  const requests = [];
+  const server = http.createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const payload = JSON.parse(body);
+    requests.push(payload);
+    const parts = requests.length === 1
+      ? [{ functionCall: { name: 'list_channels', args: {} }, thoughtSignature: 'sequential-one' }]
+      : requests.length === 2
+        ? [{ functionCall: { name: 'list_roles', args: {} }, thoughtSignature: 'sequential-two' }]
+        : requests.length === 3
+          ? [{ text: 'I have enough information.' }]
+          : [{ functionCall: { name: 'create_category', args: { name: 'Support' } } }];
+    if (requests.length === 3) {
+      const historical = payload.contents.flatMap((content) => content.parts).filter((part) => part.functionCall);
+      const responses = payload.contents.flatMap((content) => content.parts).filter((part) => part.functionResponse);
+      if (historical.map((part) => part.thoughtSignature).join(',') !== 'sequential-one,sequential-two'
+          || responses.some((part) => part.functionResponse.id)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Invalid signed sequential history.' } }));
+        return;
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ candidates: [{ content: { role: 'model', parts } }] }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+
+  const provider = new GeminiProvider({
+    apiKey: 'test-key',
+    baseUrl: `http://127.0.0.1:${server.address().port}/v1beta`,
+    model: 'test-model',
+    timeoutMs: 5000,
+  });
+  const guild = makeGuild();
+  const plan = await createPlan({
+    provider,
+    config: { ...CONFIG, aiMaxPlanningRounds: 3 },
+    ctx: { guild, storage: {}, logger: null },
+    prompt: 'Create a Support category',
+    snapshot: buildGuildSnapshot(guild, guild.members.me),
+  });
+  assert.equal(plan.actions[0].tool, 'create_category');
+  assert.equal(requests.length, 4);
+});
+
 test('available native tool exchanges remain native and the input is not mutated', () => {
   const tools = [
     { type: 'function', function: { name: 'get_server_snapshot' } },

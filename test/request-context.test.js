@@ -47,3 +47,27 @@ test('recent follow-up context is confirmed, current, and isolated to one user a
   assert.equal(await loadRecentRequestContext(storage, 'another-guild', 'owner-1', snapshot), null);
   await storage.close();
 });
+
+test('an Undo invalidates the pre-Undo follow-up reference', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eternalz-request-context-undo-'));
+  const storage = new JsonStore({ file: path.join(dir, 'store.json') });
+  await storage.init();
+  const guild = makeGuild({ id: 'guild-1', channels: [{ id: 'channel-1', name: 'general' }] });
+  const snapshot = buildGuildSnapshot(guild, guild.members.me);
+  await storage.addAudit({
+    guildId: guild.id,
+    requesterId: 'owner-1',
+    event: 'executed',
+    createdAt: Date.now() - 1000,
+    summary: { succeeded: [{ tool: 'rename_channel', data: { id: 'channel-1', name: 'lobby' } }] },
+  });
+  await storage.addAudit({
+    guildId: guild.id,
+    requesterId: 'owner-1',
+    event: 'undone',
+    createdAt: Date.now(),
+    summary: { succeeded: [{ tool: 'rename_channel', data: { id: 'channel-1', name: 'general' } }] },
+  });
+  assert.equal(await loadRecentRequestContext(storage, guild.id, 'owner-1', snapshot), null);
+  await storage.close();
+});

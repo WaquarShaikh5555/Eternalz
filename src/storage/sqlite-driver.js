@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS ai_plans (
   confirmed_at INTEGER,
   executed_at  INTEGER,
   result       TEXT,
-  permission_gaps TEXT
+  permission_gaps TEXT,
+  undo         TEXT,
+  undo_in_progress INTEGER NOT NULL DEFAULT 0,
+  undo_result  TEXT,
+  undone_at    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS ai_audit (
@@ -91,8 +95,17 @@ class SqliteStore {
   /** Add columns that newer versions introduced, if they are missing. */
   #migrate() {
     const columns = this.db.prepare('PRAGMA table_info(ai_plans)').all();
-    if (!columns.some((c) => c.name === 'permission_gaps')) {
-      this.db.exec('ALTER TABLE ai_plans ADD COLUMN permission_gaps TEXT');
+    const additions = [
+      ['permission_gaps', 'TEXT'],
+      ['undo', 'TEXT'],
+      ['undo_in_progress', 'INTEGER NOT NULL DEFAULT 0'],
+      ['undo_result', 'TEXT'],
+      ['undone_at', 'INTEGER'],
+    ];
+    for (const [name, definition] of additions) {
+      if (!columns.some((column) => column.name === name)) {
+        this.db.exec(`ALTER TABLE ai_plans ADD COLUMN ${name} ${definition}`);
+      }
     }
   }
 
@@ -110,13 +123,15 @@ class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO ai_plans
-          (id, guild_id, requester_id, prompt, actions, risk, reasons, status, created_at, expires_at, confirmed_at, executed_at, result, permission_gaps)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, guild_id, requester_id, prompt, actions, risk, reasons, status, created_at, expires_at, confirmed_at, executed_at, result, permission_gaps, undo, undo_in_progress, undo_result, undone_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
           prompt=excluded.prompt, actions=excluded.actions, risk=excluded.risk,
           reasons=excluded.reasons, status=excluded.status, expires_at=excluded.expires_at,
           confirmed_at=excluded.confirmed_at, executed_at=excluded.executed_at, result=excluded.result,
-          permission_gaps=excluded.permission_gaps`,
+          permission_gaps=excluded.permission_gaps, undo=excluded.undo,
+          undo_in_progress=excluded.undo_in_progress, undo_result=excluded.undo_result,
+          undone_at=excluded.undone_at`,
       )
       .run(
         plan.id,
@@ -133,6 +148,10 @@ class SqliteStore {
         plan.executedAt ?? null,
         plan.result === undefined ? null : JSON.stringify(plan.result),
         plan.permissionGaps === undefined ? null : JSON.stringify(plan.permissionGaps),
+        plan.undo === undefined ? null : JSON.stringify(plan.undo),
+        plan.undoInProgress ? 1 : 0,
+        plan.undoResult === undefined ? null : JSON.stringify(plan.undoResult),
+        plan.undoneAt ?? null,
       );
     return plan;
   }
@@ -235,6 +254,10 @@ function rowToPlan(row) {
     executedAt: row.executed_at ?? null,
     result: row.result ? safeParse(row.result, null) : null,
     permissionGaps: row.permission_gaps ? safeParse(row.permission_gaps, null) : null,
+    undo: row.undo ? safeParse(row.undo, null) : null,
+    undoInProgress: Boolean(row.undo_in_progress),
+    undoResult: row.undo_result ? safeParse(row.undo_result, null) : null,
+    undoneAt: row.undone_at ?? null,
   };
 }
 

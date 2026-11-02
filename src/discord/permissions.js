@@ -152,10 +152,19 @@ function permissionsFromNames(names = []) {
  * @param {string} toolName
  * @returns {string[]} missing permission names
  */
-function missingToolPermissions(guild, toolName) {
-  const required = TOOL_PERMISSIONS[toolName] || [];
-  if (!required.length) return [];
+function missingToolPermissions(guild, toolName, args = {}) {
   const me = guild?.members?.me;
+  let required = TOOL_PERMISSIONS[toolName] || [];
+  if (toolName === 'set_member_nickname' && me) {
+    const raw = String(args.member || '').trim();
+    const mentionId = raw.match(/^<@!?(\d+)>$/)?.[1] || null;
+    const cached = guild.members?.cache?.get?.(raw)
+      || (mentionId ? guild.members?.cache?.get?.(mentionId) : null);
+    if (raw === me.id || mentionId === me.id || cached?.id === me.id) {
+      required = ['ChangeNickname'];
+    }
+  }
+  if (!required.length) return [];
   if (!me) return required;
   return required.filter((name) => {
     const flag = PermissionFlagsBits[name];

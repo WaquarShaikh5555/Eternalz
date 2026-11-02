@@ -76,7 +76,7 @@ async function executePlan(options) {
 
       // Fail fast when the bot is missing a Discord permission, so the user
       // gets an actionable message instead of a raw Discord 403.
-      const missing = missingToolPermissions(ctx.guild, action.tool);
+      const missing = missingToolPermissions(ctx.guild, action.tool, action.args);
       if (missing.length) {
         throw new Error(
           `The bot is missing the following Discord permission(s): ${missing.join(', ')}. ` +
@@ -169,7 +169,7 @@ function buildSummary(succeeded, failed, skipped) {
 function planPermissionGaps(guild, actions = []) {
   const missing = new Set();
   for (const action of actions) {
-    for (const name of missingToolPermissions(guild, action.tool)) missing.add(name);
+    for (const name of missingToolPermissions(guild, action.tool, action.args)) missing.add(name);
   }
   const list = [...missing];
   return { missing: list, hint: permissionFixHint(guild, list) };

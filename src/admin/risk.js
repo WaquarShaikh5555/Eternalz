@@ -136,7 +136,7 @@ function assessAction(action) {
  * @returns {{level: string, reasons: string[], counts: object}}
  */
 function assessPlan(actions = []) {
-  const counts = { read: 0, safe: 0, confirm: 0, confirmTwice: 0 };
+  const counts = { read: 0, safe: 0, confirm: 0, confirm_twice: 0 };
   const reasons = [];
   let level = RISK.READ;
 
@@ -173,11 +173,20 @@ function assessPlan(actions = []) {
   }
 
   // A plan that only reads is not a plan.
-  if (actions.length > 0 && counts.safe + counts.confirm + counts.confirmTwice === 0) {
+  if (actions.length > 0 && counts.safe + counts.confirm + counts.confirm_twice === 0) {
     level = RISK.READ;
   }
 
-  return { level, reasons, counts };
+  return {
+    level,
+    reasons,
+    counts: {
+      read: counts.read,
+      safe: counts.safe,
+      confirm: counts.confirm,
+      confirmTwice: counts.confirm_twice,
+    },
+  };
 }
 
 const RISK_LABELS = {

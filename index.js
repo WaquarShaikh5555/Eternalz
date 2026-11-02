@@ -174,7 +174,17 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     if (isConversationButton(interaction.customId)) {
       try {
-        await handleConversationButton(interaction);
+        await handleConversationButton(interaction, {
+          guild: interaction.guild,
+          config: runtime.config,
+          storage: runtime.storage,
+          audit: runtime.audit,
+          logger: logger.child('admin'),
+          limiter: runtime.limiter,
+          cooldown: runtime.cooldown,
+          provider: runtime.provider,
+          client,
+        });
       } catch (error) {
         const err = toError(error);
         logger.error(`AI conversation button failed: ${err.message}`);

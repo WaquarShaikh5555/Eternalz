@@ -79,10 +79,11 @@ delete up to 100 recent messages in a channel. Usernames, user ids and Discord
 **5 minutes**. All moderation-status changes and bulk deletion require
 confirmation.
 
-**Member administration** — change or clear nicknames, move a connected member
-between voice/stage channels, or disconnect them from voice. Nickname changes
-are reversible and automatic when explicitly requested; voice moderation
-requires confirmation.
+**Member administration** — change or clear nicknames (including the bot's own
+nickname with `ChangeNickname`), move a connected member between voice/stage
+channels, or disconnect them from voice. Nickname changes are automatic when
+explicitly requested and can be restored with Undo; voice moderation requires
+confirmation.
 
 **Server & access** — rename the server, toggle a channel's age restriction,
 and create invites with bounded expiry/use limits. Ordinary invites expire
@@ -138,7 +139,28 @@ For a separate follow-up such as **“rename it to lobby”**, the planner recei
 only the latest confirmed successful result (for up to 30 minutes) from the
 same administrator in the same server. It can therefore resolve “it” to the existing channel id instead
 of creating a duplicate. Pending, failed, other-user and other-server actions
-are not treated as completed context.
+are not treated as completed context. A completed or partial Undo invalidates
+that old reference rather than pretending the earlier state is still current.
+
+### Design choices, Close and Undo
+
+Open-ended appearance requests such as **“improve the overall look”** first
+show design-direction buttons (or a custom-direction popup). Nothing is changed
+at that step. After a direction is chosen, the exact plan is shown for
+confirmation; instruction phrases such as “look improving” are not accepted as
+resource names.
+
+**Close** only removes the buttons from a finished result. It does not cancel a
+plan or reverse an action. **Cancel** is separate and only appears on a pending
+plan before execution.
+
+For 15 minutes after execution, **Undo** is offered when the captured tool
+reversal has a reliable, validated inverse. It restores edits in reverse order,
+re-checks requester/guild authorization and Discord permissions, and verifies
+the result. It never promises to restore deleted messages/channels, kicks,
+bans, invites or other effects without a safe inverse. If only some changes are
+reversible, the result says so; a failed Undo is reported without repeating
+successful reversals.
 
 ---
 
@@ -574,12 +596,16 @@ The test suite covers:
   change while the rest of the bot keeps working;
 * **storage** — SQLite and JSON drivers, round-trips and restarts;
 * **the provider wire format** — request bodies, tool-call parsing, 429 →
-  quota error, 401 → no retry, 5xx → retry, invalid JSON, and the native
-  Gemini format and model-ending request regression (against a local HTTP server);
+  quota error, 401 → no retry, 5xx → retry, invalid JSON, native Gemini
+  sequential/parallel thought-signature and call-id preservation, and the
+  model-ending request regression (against a local HTTP server);
 * **the full request flow** — plain-language requests through the mocked
   Discord API, including create-then-rename follow-ups, mention-based
   moderation, nicknames, topics, slowmode, voice state, server/NSFW settings
-  and invites, with no sensitive operation executing before confirmation.
+  and invites, with no sensitive operation executing before confirmation;
+* **result UX and Undo** — design choices, low-value rename rejection,
+  post-execution Close semantics, requester-bound verified Undo, self-nickname
+  changes, and honest irreversible-operation limitations.
 
 ---
 
@@ -602,9 +628,10 @@ The test suite covers:
 * Privileged roles (anything carrying `Administrator`, `ManageGuild`,
   `ManageRoles`, …) can be created with confirmation but can never be assigned
   or removed from a member by the AI.
-* Deletions, bans and kicks cannot be rolled back by the bot. The audit log
-  records the previous state of *reversible* changes (previous name, previous
-  topic, previous permissions) so an administrator can undo them by hand.
+* Deletions, bans and kicks cannot be rolled back by the bot. Undo is available
+  only for supported captured reversible edits for 15 minutes; all other
+  operations are explicitly marked as not automatically reversible. The audit
+  log retains the execution report for manual recovery.
 * Free AI tiers are rate limited. Direct requests need no model call; complex
   requests normally use two, with bounded nudges/correction potentially adding
   a call.

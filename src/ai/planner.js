@@ -44,8 +44,8 @@ REQUEST MAPPING
 JUDGEMENT
 - Infer safe defaults: kebab-case channels, implied categories and sensible role colours. Complete obvious dependencies, such as a missing ticket category before its channel.
 - Reuse existing entities, including alternate spellings. Check bot permissions first; name a missing permission instead of planning a doomed action. For ambiguity, choose the clearly safer interpretation and mention it briefly.
-- OPEN-ENDED REQUESTS ARE INSTRUCTIONS. "Improve", "redesign" or "change whatever you want" means inspect and design a coherent improvement, not ask what to change.
-- For an open-ended visual redesign, choose about 3-8 tasteful safe changes: rename/reorganise channels/categories, improve topics, add a useful category, or create/rename/recolour non-privileged roles. Explain the style briefly.
+- OPEN-ENDED REQUESTS ARE INSTRUCTIONS, but the app may first offer design directions. After a direction is selected, inspect and design a coherent improvement rather than asking what to change.
+- For an open-ended visual redesign, choose about 2-6 tasteful safe changes anchored in current entity purposes. Never use instruction words such as "look improving" as a resource name or make an arbitrary rename just to act.
 - Open-ended delegation never authorises deletion, moderation, overwrites, privileged roles or access changes. Without it, invent no unrelated changes.
 - For unsupported requests, name the closest supported action. For informational requests, answer from state without changes.
 
@@ -144,7 +144,13 @@ async function inspectPhase({ provider, config, ctx, prompt, snapshot, messages,
     });
 
     if (!response.toolCalls?.length) {
-      if (response.text) messages.push({ role: 'assistant', content: response.text });
+      if (response.text) {
+        messages.push({
+          role: 'assistant',
+          content: response.text,
+          ...(response.geminiParts?.length ? { geminiParts: response.geminiParts } : {}),
+        });
+      }
       return { messages, readResults, rejected };
     }
 
@@ -152,6 +158,7 @@ async function inspectPhase({ provider, config, ctx, prompt, snapshot, messages,
       role: 'assistant',
       content: response.text || null,
       toolCalls: response.toolCalls,
+      ...(response.geminiParts?.length ? { geminiParts: response.geminiParts } : {}),
     });
 
     let wantsToChange = false;
@@ -231,7 +238,11 @@ async function planPhase({ provider, config, ctx, messages, logger }) {
 
   // Some models answer with prose instead of a tool call. Nudge once.
   if (!response.toolCalls?.length) {
-    messages.push({ role: 'assistant', content: response.text || '' });
+    messages.push({
+      role: 'assistant',
+      content: response.text || '',
+      ...(response.geminiParts?.length ? { geminiParts: response.geminiParts } : {}),
+    });
     messages.push({
       role: 'user',
       content:

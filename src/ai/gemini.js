@@ -35,33 +35,60 @@ class GeminiProvider {
     const messages = sanitizeToolHistory(request.messages, request.tools);
     const system = messages.filter((m) => m.role === 'system');
     const contents = [];
+    const providerCallIds = new Map();
+    for (const message of messages) {
+      const rawCalls = (message.geminiParts || []).filter((part) => part.functionCall);
+      (message.toolCalls || []).forEach((call, index) => {
+        const nativeId = call.providerCallId || rawCalls[index]?.functionCall?.id;
+        if (nativeId) providerCallIds.set(call.id, nativeId);
+      });
+    }
+
     const appendContent = (role, parts) => {
       const previous = contents.at(-1);
-      // Gemini multi-turn history alternates user/model. Coalescing also
-      // groups parallel function responses into the single user turn Gemini
-      // expects after a model's parallel function calls.
-      if (previous?.role === role) previous.parts.push(...parts);
+      // Gemini groups parallel function responses into one user turn. Do not,
+      // however, merge two separately signed model parts: thought signatures
+      // belong to their exact original part and cannot be combined.
+      const separatelySigned = role === 'model'
+        && previous?.role === role
+        && previous.parts.some((part) => part.thoughtSignature)
+        && parts.some((part) => part.thoughtSignature);
+      if (previous?.role === role && !separatelySigned) previous.parts.push(...parts);
       else contents.push({ role, parts });
     };
 
     for (const message of messages) {
       if (message.role === 'system') continue;
       if (message.role === 'tool') {
+        const providerCallId = providerCallIds.get(message.toolCallId);
         appendContent('user', [
           {
             functionResponse: {
               name: message.name || message.toolCallId,
+              ...(providerCallId ? { id: providerCallId } : {}),
               response: { result: message.content },
             },
           },
         ]);
         continue;
       }
-      if (message.role === 'assistant' && message.toolCalls?.length) {
-        appendContent('model', message.toolCalls.map((call) => ({
-          functionCall: { name: call.name, args: call.arguments ?? {} },
-        })));
-        continue;
+      if (message.role === 'assistant') {
+        const signedParts = normaliseModelParts(message.geminiParts);
+        if (signedParts.length) {
+          appendContent('model', signedParts);
+          continue;
+        }
+        if (message.toolCalls?.length) {
+          appendContent('model', message.toolCalls.map((call) => ({
+            functionCall: {
+              name: call.name,
+              args: call.arguments ?? {},
+              ...(call.providerCallId ? { id: call.providerCallId } : {}),
+            },
+            ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
+          })));
+          continue;
+        }
       }
       appendContent(message.role === 'assistant' ? 'model' : 'user', [
         { text: String(message.content ?? '') },
@@ -165,10 +192,18 @@ class GeminiProvider {
     for (const part of parts) {
       if (part.functionCall) {
         this.callCounter += 1;
+        const providerCallId = typeof part.functionCall.id === 'string' && part.functionCall.id
+          ? part.functionCall.id
+          : null;
         toolCalls.push({
-          id: `gemini_call_${this.callCounter}`,
+          // The unified planner always needs an id. Keep Gemini's native id
+          // separately so locally generated fallback ids are never sent back
+          // to Google as if the model had supplied them.
+          id: providerCallId || `gemini_call_${this.callCounter}`,
+          ...(providerCallId ? { providerCallId } : {}),
           name: part.functionCall.name,
           arguments: part.functionCall.args || {},
+          ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
         });
       } else if (typeof part.text === 'string') {
         text = text ? `${text}\n${part.text}` : part.text;
@@ -184,11 +219,40 @@ class GeminiProvider {
     return {
       text,
       toolCalls,
+      // Keep the exact signed model parts for the next request. Rebuilding a
+      // functionCall from only name/args loses Gemini 3/4 thought signatures.
+      geminiParts: normaliseModelParts(parts),
       finishReason: candidate?.finishReason || null,
       usage: data?.usageMetadata || null,
       model: this.model,
     };
   }
+}
+
+/** Copy only model-part fields that are meaningful to this provider. */
+function normaliseModelParts(parts) {
+  if (!Array.isArray(parts)) return [];
+  const output = [];
+  for (const part of parts) {
+    if (!part || typeof part !== 'object') continue;
+    const copy = {};
+    if (typeof part.text === 'string') copy.text = part.text;
+    if (part.functionCall && typeof part.functionCall === 'object') {
+      copy.functionCall = {
+        name: part.functionCall.name,
+        args: part.functionCall.args || {},
+        ...(part.functionCall.id ? { id: part.functionCall.id } : {}),
+      };
+    }
+    if (typeof part.thoughtSignature === 'string' && part.thoughtSignature) {
+      copy.thoughtSignature = part.thoughtSignature;
+    }
+    if (part.thought === true) copy.thought = true;
+    if (copy.text !== undefined || copy.functionCall || copy.thoughtSignature || copy.thought) {
+      output.push(copy);
+    }
+  }
+  return output;
 }
 
 function buildHttpError(response, parsed, provider) {
